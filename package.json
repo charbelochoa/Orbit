@@ -1,0 +1,89 @@
+{
+  "name": "orbit-ai",
+  "version": "1.0.0",
+  "description": "Orbit AI — Asistente de escritorio local con IA",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "electron": "electron .",
+    "electron:dev": "concurrently --kill-others --names \"BACKEND,ELECTRON\" --prefix-colors \"cyan,magenta\" \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "build": "tsc",
+    "build:electron": "tsc && electron-builder",
+    "pack": "tsc && electron-builder --dir",
+    "start": "node --experimental-specifier-resolution=node dist/index.js"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "better-sqlite3": "^11.5.0",
+    "dotenv": "^16.4.5",
+    "node-notifier": "^10.0.1",
+    "puppeteer-core": "^23.6.1",
+    "screenshot-desktop": "^1.15.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.8.2",
+    "@types/node-notifier": "^8.0.5",
+    "@types/ws": "^8.5.12",
+    "concurrently": "^9.1.0",
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.orbit.ai",
+    "productName": "Orbit AI",
+    "copyright": "Copyright © 2025 Orbit AI",
+    "directories": {
+      "output": "dist-installer"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "src/ui/web/**/*",
+      "engine/**/*",
+      "assets/**/*",
+      ".env",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine",
+        "to": "engine",
+        "filter": ["**/*", "!models/.gitkeep"]
+      },
+      {
+        "from": "config",
+        "to": "config"
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.png",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Orbit AI"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon@2x.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png",
+      "category": "Utility"
+    }
+  }
+}

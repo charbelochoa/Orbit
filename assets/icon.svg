@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0a0b0f"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7c6af7" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#7c6af7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="128" cy="128" r="124" fill="url(#bg)" stroke="#7c6af7" stroke-width="2"/>
+
+  <!-- Glow halo -->
+  <circle cx="128" cy="128" r="90" fill="url(#glow)"/>
+
+  <!-- Orbit ring -->
+  <ellipse cx="128" cy="128" rx="88" ry="30" fill="none" stroke="#7c6af7" stroke-width="3" stroke-dasharray="8 5" opacity="0.7"/>
+
+  <!-- Planet body -->
+  <circle cx="128" cy="128" r="38" fill="#7c6af7"/>
+  <circle cx="128" cy="128" r="38" fill="none" stroke="#a89df9" stroke-width="2"/>
+
+  <!-- Highlight on planet -->
+  <circle cx="118" cy="118" r="10" fill="#c4b9fb" opacity="0.4"/>
+
+  <!-- Satellite dot on orbit -->
+  <circle cx="216" cy="128" r="9" fill="#ffffff" opacity="0.95"/>
+  <circle cx="216" cy="128" r="5" fill="#7c6af7"/>
+
+  <!-- Small stars -->
+  <circle cx="50"  cy="60"  r="2" fill="#ffffff" opacity="0.7"/>
+  <circle cx="195" cy="45"  r="1.5" fill="#ffffff" opacity="0.5"/>
+  <circle cx="210" cy="185" r="2" fill="#ffffff" opacity="0.6"/>
+  <circle cx="40"  cy="195" r="1.5" fill="#ffffff" opacity="0.5"/>
+  <circle cx="72"  cy="210" r="1" fill="#ffffff" opacity="0.4"/>
+</svg>

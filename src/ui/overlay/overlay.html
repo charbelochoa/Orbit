@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<title>Orbit Overlay</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:100vw;height:100vh;overflow:hidden;
+  background:transparent;
+  -webkit-app-region:no-drag;
+  user-select:none;cursor:default;
+}
+
+#mascot-container{
+  position:absolute;
+  width:64px;height:84px;
+  bottom:40px;right:40px;
+  z-index:10;cursor:grab;
+}
+#mascot-container:active{cursor:grabbing}
+#mascot-container.dragging{transition:none!important}
+
+#mascot-canvas{
+  width:64px;height:64px;
+  image-rendering:pixelated;
+  image-rendering:crisp-edges;
+  -webkit-image-rendering:pixelated;
+  filter:drop-shadow(0 0 6px rgba(124,106,247,.35)) drop-shadow(0 2px 3px rgba(0,0,0,.4));
+  transition:filter .3s;
+}
+#mascot-container:hover #mascot-canvas{
+  filter:drop-shadow(0 0 12px rgba(124,106,247,.55)) drop-shadow(0 2px 4px rgba(0,0,0,.5));
+}
+
+#mascot-shadow{
+  width:30px;height:6px;
+  background:radial-gradient(ellipse,rgba(124,106,247,.22) 0%,transparent 70%);
+  margin:0 auto;border-radius:50%;
+  transition:width .3s,opacity .3s;
+}
+#mascot-container.jumping #mascot-shadow{width:18px;opacity:.1}
+
+#mascot-name{
+  text-align:center;
+  font-family:'Segoe UI',system-ui,sans-serif;
+  font-size:8px;font-weight:800;
+  color:#b8b0ff;
+  text-shadow:0 0 6px rgba(124,106,247,.6),0 1px 2px rgba(0,0,0,.8);
+  letter-spacing:1.5px;text-transform:uppercase;
+  margin-top:1px;opacity:.85;
+}
+
+/* Speech bubble */
+#speech-bubble{
+  position:absolute;
+  bottom:calc(100% + 8px);left:50%;
+  transform:translateX(-50%) translateY(6px) scale(.95);
+  background:linear-gradient(135deg,rgba(20,18,35,.95),rgba(30,25,55,.95));
+  border:1px solid rgba(124,106,247,.4);
+  border-radius:12px;padding:8px 12px;
+  max-width:220px;min-width:40px;
+  font-family:'Segoe UI',system-ui,sans-serif;
+  font-size:11px;line-height:1.45;color:#e2e0f8;
+  box-shadow:0 4px 16px rgba(0,0,0,.45),0 0 12px rgba(124,106,247,.1),inset 0 1px 0 rgba(255,255,255,.04);
+  opacity:0;pointer-events:none;
+  transition:opacity .3s cubic-bezier(.4,0,.2,1),transform .3s cubic-bezier(.4,0,.2,1);
+  white-space:normal;word-wrap:break-word;
+  text-align:left;backdrop-filter:blur(12px);
+}
+#speech-bubble.visible{
+  opacity:1;pointer-events:none;
+  transform:translateX(-50%) translateY(0) scale(1);
+}
+#speech-bubble::after{
+  content:'';position:absolute;
+  bottom:-6px;left:50%;transform:translateX(-50%) rotate(45deg);
+  width:10px;height:10px;
+  background:linear-gradient(135deg,transparent 50%,rgba(25,22,45,.95) 50%);
+  border-right:1px solid rgba(124,106,247,.4);
+  border-bottom:1px solid rgba(124,106,247,.4);
+}
+
+/* Status indicator dot */
+#status-indicator{
+  position:absolute;top:-1px;right:-1px;
+  width:10px;height:10px;border-radius:50%;
+  border:2px solid rgba(10,11,15,.95);
+  background:#444;transition:background .3s,box-shadow .3s;z-index:20;
+}
+#status-indicator.listening{background:#3dd68c;box-shadow:0 0 10px rgba(61,214,140,.8),0 0 20px rgba(61,214,140,.3);animation:pulse-listen .8s infinite alternate}
+#status-indicator.thinking{background:#7c6af7;box-shadow:0 0 8px rgba(124,106,247,.7);animation:pulse-status 1.2s infinite}
+#status-indicator.speaking{background:#f4c542;box-shadow:0 0 8px rgba(244,197,66,.6);animation:pulse-status .4s infinite alternate}
+#status-indicator.error{background:#e74c6c;box-shadow:0 0 6px rgba(231,76,108,.5)}
+#status-indicator.happy{background:#ffd93d;box-shadow:0 0 8px rgba(255,217,61,.6);animation:pulse-happy .6s ease-in-out 3}
+
+@keyframes pulse-status{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes pulse-listen{
+  0%{box-shadow:0 0 6px rgba(61,214,140,.5),0 0 12px rgba(61,214,140,.15)}
+  100%{box-shadow:0 0 12px rgba(61,214,140,.9),0 0 24px rgba(61,214,140,.4)}
+}
+@keyframes pulse-happy{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}
+
+/* Particles & sparkles */
+.particle{
+  position:absolute;width:2px;height:2px;
+  border-radius:50%;pointer-events:none;
+  animation:float-particle 3s ease-in-out infinite;
+}
+@keyframes float-particle{
+  0%,100%{transform:translateY(0) scale(1);opacity:.4}
+  50%{transform:translateY(-14px) scale(.5);opacity:.05}
+}
+.sparkle{
+  position:absolute;width:3px;height:3px;
+  border-radius:50%;background:#ffd93d;
+  pointer-events:none;animation:sparkle-anim .8s ease-out forwards;
+}
+@keyframes sparkle-anim{
+  0%{transform:scale(0);opacity:1}
+  50%{transform:scale(1.5);opacity:.8}
+  100%{transform:scale(0) translateY(-16px);opacity:0}
+}
+</style>
+</head>
+<body>
+
+<div id="mascot-container">
+  <div id="status-indicator"></div>
+  <div id="speech-bubble"></div>
+  <canvas id="mascot-canvas" width="16" height="16"></canvas>
+  <div id="mascot-shadow"></div>
+  <div id="mascot-name">ORBIT</div>
+</div>
+
+<script>
+'use strict';
+
+const container  = document.getElementById('mascot-container');
+const canvas     = document.getElementById('mascot-canvas');
+const ctx        = canvas.getContext('2d');
+const bubble     = document.getElementById('speech-bubble');
+const statusDot  = document.getElementById('status-indicator');
+
+// ── Palette ────────────────────────────────────────────────────────
+const PAL = {
+  _: null,
+  0: '#1a1030',
+  1: '#2d1f5e',
+  2: '#4a3d8f',
+  3: '#7c6af7',  // Updated to Orbit v2 accent purple
+  4: '#9b8cf8',
+  5: '#c4b9fb',
+  6: '#ffffff',
+  7: '#1a1a2e',
+  8: '#e74c6c',
+  9: '#3dd68c',
+  A: '#ffd93d',
+  B: '#2d2040',
+  C: '#4a3366',
+};
+
+// ── Sprites (16×16 pixel art) ──────────────────────────────────────
+const SPRITES = {
+  idle: [
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04446764467440_',
+      '_04446764467440_',
+      '_0344444444430__',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03322330____',
+      '____0BB00BB0____',
+      '____0CC00CC0____',
+    ],
+    [
+      '________________',
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444554444430_',
+      '_04446764467440_',
+      '_04446764467440_',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03322330____',
+      '____0BB00BB0____',
+      '____0CC00CC0____',
+    ],
+  ],
+  walk: [
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04446764467440_',
+      '_04446764467440_',
+      '_0344444444430__',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03222230____',
+      '___0BB0_0330____',
+      '___0CC0__0BB0___',
+      '________0CC0____',
+    ],
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04446764467440_',
+      '_04446764467440_',
+      '_0344444444430__',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03222230____',
+      '____0330_0BB0___',
+      '___0BB0__0CC0___',
+      '___0CC0_________',
+    ],
+  ],
+  sleep: [
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04440000400040_',
+      '_04444444444440_',
+      '_0344444444430__',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03322330____',
+      '____0BB00BB0____',
+      '____0CC00CC0____',
+    ],
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04444444444440_',
+      '_04440000400040_',
+      '_0344444444430__',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03322330____',
+      '____0BB00BB0____',
+      '____0CC00CC0____',
+    ],
+  ],
+  point: [
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04446764467440_',
+      '_04446764467440_',
+      '_0344444444430__',
+      '_03444444444430_',
+      '__03444444443000',
+      '___033333333022_',
+      '___032222230_00_',
+      '___0322222230___',
+      '___0322222230___',
+      '____03322330____',
+      '____0BB00BB0____',
+      '____0CC00CC0____',
+    ],
+  ],
+  happy: [
+    [
+      '____00000000____',
+      '___0344444430___',
+      '__034444444430__',
+      '_03444455444430_',
+      '_04440764407440_',
+      '_04446764467440_',
+      '_034448448430___',
+      '_03444444444430_',
+      '__034444444430__',
+      '___0333333330___',
+      '___0322222230___',
+      '___0322222230___',
+      '___0322222230___',
+      '____03322330____',
+      '____0BB00BB0____',
+      '____0CC00CC0____',
+    ],
+  ],
+};
+
+// ── Animation state ────────────────────────────────────────────────
+let currentAnim  = 'idle';
+let currentFrame = 0;
+let frameTimer   = 0;
+const FRAME_RATES = { idle: 800, walk: 200, sleep: 1200, point: 1000, happy: 600 };
+let facingRight  = true;
+
+function drawSprite(spriteData) {
+  ctx.clearRect(0, 0, 16, 16);
+  for (let y = 0; y < 16; y++) {
+    const row = spriteData[y];
+    for (let x = 0; x < 16; x++) {
+      const ch = row[x];
+      if (ch === '_' || ch === ' ') continue;
+      const color = PAL[ch];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      const drawX = facingRight ? x : 15 - x;
+      ctx.fillRect(drawX, y, 1, 1);
+    }
+  }
+}
+
+function animationTick(dt) {
+  frameTimer += dt;
+  const rate = FRAME_RATES[currentAnim] || 500;
+  if (frameTimer >= rate) {
+    frameTimer = 0;
+    const frames = SPRITES[currentAnim];
+    if (frames) {
+      currentFrame = (currentFrame + 1) % frames.length;
+      drawSprite(frames[currentFrame]);
+    }
+  }
+}
+
+function setAnimation(anim) {
+  if (currentAnim === anim) return;
+  currentAnim  = anim;
+  currentFrame = 0;
+  frameTimer   = 0;
+  const frames = SPRITES[anim];
+  if (frames) drawSprite(frames[0]);
+}
+
+// ── Physics engine ─────────────────────────────────────────────────
+const physics = {
+  x: window.innerWidth - 140,
+  y: window.innerHeight - 140,
+  vx: 0, vy: 0,
+  targetX: null, targetY: null,
+  bobPhase: 0, bobAmplitude: 3,
+  friction: 0.92, attractForce: 0.0008, maxSpeed: 2.5,
+  wanderTimer: 0,
+  wanderInterval: 8000 + Math.random() * 12000,
+  isIdle: true, isDragging: false,
+  dragOffX: 0, dragOffY: 0,
+};
+
+let orbState = 'idle';
+
+function updatePhysics(dt) {
+  if (physics.isDragging) return;
+
+  const W = window.innerWidth - 64;
+  const H = window.innerHeight - 84;
+
+  physics.bobPhase += dt * 0.002;
+  const bobOffset = Math.sin(physics.bobPhase) * physics.bobAmplitude;
+
+  if (physics.targetX !== null && physics.targetY !== null) {
+    const dx = physics.targetX - physics.x;
+    const dy = physics.targetY - physics.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist > 5) {
+      physics.vx += (dx / dist) * physics.attractForce * dt;
+      physics.vy += (dy / dist) * physics.attractForce * dt;
+      physics.isIdle = false;
+      if (Math.abs(physics.vx) > 0.3) facingRight = physics.vx > 0;
+    } else {
+      physics.targetX = null; physics.targetY = null;
+      physics.isIdle = true;
+    }
+  }
+
+  physics.wanderTimer += dt;
+  if (physics.isIdle && physics.wanderTimer > physics.wanderInterval) {
+    physics.wanderTimer = 0;
+    physics.wanderInterval = 8000 + Math.random() * 12000;
+    const margin = 80;
+    physics.targetX = margin + Math.random() * (W - margin * 2);
+    physics.targetY = margin + Math.random() * (H - margin * 2);
+  }
+
+  physics.vx *= physics.friction;
+  physics.vy *= physics.friction;
+
+  const speed = Math.sqrt(physics.vx * physics.vx + physics.vy * physics.vy);
+  if (speed > physics.maxSpeed) {
+    physics.vx = (physics.vx / speed) * physics.maxSpeed;
+    physics.vy = (physics.vy / speed) * physics.maxSpeed;
+  }
+
+  physics.x += physics.vx * dt * 0.06;
+  physics.y += physics.vy * dt * 0.06;
+
+  if (physics.x < 0) { physics.x = 0; physics.vx = Math.abs(physics.vx) * 0.5; }
+  if (physics.x > W) { physics.x = W; physics.vx = -Math.abs(physics.vx) * 0.5; }
+  if (physics.y < 0) { physics.y = 0; physics.vy = Math.abs(physics.vy) * 0.5; }
+  if (physics.y > H) { physics.y = H; physics.vy = -Math.abs(physics.vy) * 0.5; }
+
+  const isMoving = Math.abs(physics.vx) > 0.4 || Math.abs(physics.vy) > 0.4;
+  if (orbState === 'sleeping')  setAnimation('sleep');
+  else if (orbState === 'happy') setAnimation('happy');
+  else if (orbState === 'pointing') setAnimation('point');
+  else if (isMoving) setAnimation('walk');
+  else setAnimation('idle');
+
+  container.style.left = physics.x + 'px';
+  container.style.top  = (physics.y + bobOffset) + 'px';
+}
+
+// ── Mouse interaction ──────────────────────────────────────────────
+let mouseOverMascot = false;
+
+document.addEventListener('mousemove', (e) => {
+  const rect = container.getBoundingClientRect();
+  const isOver = (
+    e.clientX >= rect.left  - 10 && e.clientX <= rect.right  + 10 &&
+    e.clientY >= rect.top   - 10 && e.clientY <= rect.bottom + 10
+  );
+  if (isOver && !mouseOverMascot) {
+    mouseOverMascot = true;
+    window.orbitOverlay?.setClickThrough(false);
+  } else if (!isOver && mouseOverMascot && !physics.isDragging) {
+    mouseOverMascot = false;
+    window.orbitOverlay?.setClickThrough(true);
+  }
+  if (physics.isDragging) {
+    physics.x = e.clientX - physics.dragOffX;
+    physics.y = e.clientY - physics.dragOffY;
+    container.style.left = physics.x + 'px';
+    container.style.top  = physics.y + 'px';
+  }
+});
+
+container.addEventListener('mousedown', (e) => {
+  physics.isDragging = true;
+  physics.dragOffX   = e.clientX - physics.x;
+  physics.dragOffY   = e.clientY - physics.y;
+  container.classList.add('dragging');
+  physics.targetX = null; physics.targetY = null;
+  spawnSparkles(4);
+});
+
+document.addEventListener('mouseup', () => {
+  if (!physics.isDragging) return;
+  physics.isDragging = false;
+  physics.vx = 0; physics.vy = 0;
+  container.classList.remove('dragging');
+  window.orbitOverlay?.setClickThrough(true);
+  mouseOverMascot = false;
+});
+
+container.addEventListener('dblclick', () => {
+  window.orbitOverlay?.toggleChat();
+  spawnSparkles(6);
+});
+
+// ── Speech bubble ──────────────────────────────────────────────────
+let bubbleTimer = null;
+
+function showBubble(text, durationMs) {
+  bubble.textContent = text;
+  bubble.classList.add('visible');
+  clearTimeout(bubbleTimer);
+  if (durationMs > 0) {
+    bubbleTimer = setTimeout(() => bubble.classList.remove('visible'), durationMs);
+  }
+}
+
+function hideBubble() {
+  clearTimeout(bubbleTimer);
+  bubble.classList.remove('visible');
+}
+
+// ── Orb state ──────────────────────────────────────────────────────
+function setOrbState(state) {
+  orbState = state;
+  statusDot.className = '';
+  const dot = { listening: 'listening', thinking: 'thinking', speaking: 'speaking', error: 'error', happy: 'happy' };
+  if (dot[state]) statusDot.classList.add(dot[state]);
+}
+
+// ── Sparkles & particles ───────────────────────────────────────────
+function spawnSparkles(count) {
+  for (let i = 0; i < count; i++) {
+    const s = document.createElement('div');
+    s.className = 'sparkle';
+    s.style.left = (15 + Math.random() * 34) + 'px';
+    s.style.top  = (10 + Math.random() * 34) + 'px';
+    s.style.animationDelay = (Math.random() * 0.3) + 's';
+    const hue = 245 + Math.random() * 60;
+    s.style.background = `hsl(${hue}, 80%, 72%)`;
+    container.appendChild(s);
+    setTimeout(() => s.remove(), 1000);
+  }
+}
+
+function spawnParticle() {
+  const p = document.createElement('div');
+  p.className = 'particle';
+  p.style.left   = (-10 + Math.random() * 84) + 'px';
+  p.style.top    = (-5  + Math.random() * 44) + 'px';
+  p.style.animationDuration = (2 + Math.random() * 3) + 's';
+  p.style.animationDelay   = (Math.random() * 2) + 's';
+  p.style.opacity = 0.12 + Math.random() * 0.25;
+  p.style.width = p.style.height = (1.5 + Math.random() * 2) + 'px';
+  const hue = 250 + Math.random() * 40;
+  p.style.background = `hsla(${hue}, 70%, 70%, 0.4)`;
+  container.appendChild(p);
+  setTimeout(() => p.remove(), 5000);
+}
+
+setInterval(spawnParticle, 1500);
+
+// ── Game loop ──────────────────────────────────────────────────────
+let lastTime = performance.now();
+
+function gameLoop(now) {
+  const dt = Math.min(now - lastTime, 50);
+  lastTime = now;
+  updatePhysics(dt);
+  animationTick(dt);
+  requestAnimationFrame(gameLoop);
+}
+
+// Initial draw
+drawSprite(SPRITES.idle[0]);
+container.style.left = physics.x + 'px';
+container.style.top  = physics.y + 'px';
+requestAnimationFrame(gameLoop);
+
+// ── IPC events from main process ───────────────────────────────────
+if (window.orbitOverlay) {
+
+  // Orb state changes
+  window.orbitOverlay.onOrbState((data) => {
+    const state = data?.state || 'idle';
+    setOrbState(state);
+
+    const bubbles = {
+      thinking:  ['Pensando...', 0],
+      speaking:  ['...', 0],
+      listening: ['Escuchando...', 0],
+      error:     ['Algo falló 😕', 4000],
+      happy:     ['¡Hecho! ✨', 3000],
+      sleeping:  ['ZZZ...', 0],
+    };
+    if (bubbles[state]) showBubble(...bubbles[state]);
+    else if (state === 'idle') hideBubble();
+  });
+
+  // Text to show in bubble
+  window.orbitOverlay.onOrbSpeak((data) => {
+    if (data?.text) {
+      setOrbState('speaking');
+      // Show a snippet (max 80 chars)
+      const snippet = data.text.length > 80 ? data.text.substring(0, 80) + '...' : data.text;
+      showBubble(snippet, data.duration || 5000);
+    }
+  });
+
+  // Move orb to position
+  window.orbitOverlay.onOrbMove((data) => {
+    if (data?.x !== undefined && data?.y !== undefined) {
+      physics.targetX = data.x;
+      physics.targetY = data.y;
+      physics.isIdle  = false;
+    }
+  });
+
+  // Connected state
+  window.orbitOverlay.onConnected?.((connected) => {
+    if (connected) {
+      setOrbState('idle');
+      hideBubble();
+    } else {
+      setOrbState('error');
+      showBubble('Sin conexión...', 0);
+    }
+  });
+}
+
+// Idle sleep after 5 minutes of no activity
+let idleTimer = null;
+function resetIdleTimer() {
+  clearTimeout(idleTimer);
+  if (orbState === 'sleeping') { setOrbState('idle'); hideBubble(); }
+  idleTimer = setTimeout(() => {
+    setOrbState('sleeping');
+    showBubble('ZZZ...', 0);
+  }, 5 * 60 * 1000);
+}
+document.addEventListener('mousemove', resetIdleTimer);
+resetIdleTimer();
+</script>
+</body>
+</html>
