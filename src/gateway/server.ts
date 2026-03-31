@@ -19,6 +19,45 @@ const clients = new Map<string, Client>();
 const RATE_LIMIT_MAX  = 40;
 const RATE_LIMIT_WINDOW = 60_000;
 
+// ─── Session-level token tracking ──────────────────────────────────
+// Accumulated across the whole server session (reset on restart)
+let _sessionInputTokens  = 0;
+let _sessionOutputTokens = 0;
+let _sessionTotalTokens  = 0;
+let _contextWindow       = 1_000_000; // updated when provider info is available
+
+/** Called by index.ts when Gemini returns usageMetadata */
+export function updateTokenUsage(inputTokens: number, outputTokens: number, contextWindow?: number): void {
+    _sessionInputTokens  += inputTokens;
+    _sessionOutputTokens += outputTokens;
+    _sessionTotalTokens   = _sessionInputTokens + _sessionOutputTokens;
+    if (contextWindow) _contextWindow = contextWindow;
+    broadcast({
+        type:          "token_usage",
+        inputTokens:   _sessionInputTokens,
+        outputTokens:  _sessionOutputTokens,
+        totalTokens:   _sessionTotalTokens,
+        contextWindow: _contextWindow,
+    });
+}
+
+/** Reset counters (e.g. on /clear) */
+export function resetTokenUsage(): void {
+    _sessionInputTokens  = 0;
+    _sessionOutputTokens = 0;
+    _sessionTotalTokens  = 0;
+}
+
+/** Read-only accessors for /cost command */
+export function getTokenState() {
+    return {
+        inputTokens:  _sessionInputTokens,
+        outputTokens: _sessionOutputTokens,
+        totalTokens:  _sessionTotalTokens,
+        contextWindow: _contextWindow,
+    };
+}
+
 function isRateLimited(client: Client): boolean {
     const now = Date.now();
     // Remove timestamps outside the window
@@ -118,7 +157,11 @@ async function handleClientMessage(clientId: string, msg: any, speakFn?: (text: 
                     goal: t.goal.slice(0, 60),
                     status: t.status,
                     priority: t.priority
-                }))
+                })),
+                tokensUsed:    _sessionTotalTokens,
+                inputTokens:   _sessionInputTokens,
+                outputTokens:  _sessionOutputTokens,
+                contextWindow: _contextWindow,
             }));
             break;
         }

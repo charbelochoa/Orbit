@@ -68,6 +68,21 @@ const TOOL_METADATA: Record<string, ToolMeta> = {
     // Agent
     agent_task:         { section: "agent",   profiles: ["standard","coding","full"],           capabilities: { async: true } },
     spawn_subagent:     { section: "agent",   profiles: ["standard","coding","full"],           capabilities: { async: true } },
+
+    // Phase 3: New tools
+    file_edit:          { section: "files",   profiles: ["coding","full"],                      capabilities: {} },
+    glob_search:        { section: "files",   profiles: ["minimal","standard","coding","full"], capabilities: {} },
+    grep_search:        { section: "files",   profiles: ["minimal","standard","coding","full"], capabilities: {} },
+    web_fetch:          { section: "web",     profiles: ["standard","coding","full"],           capabilities: { requiresNetwork: true } },
+    todo_read:          { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
+    todo_write:         { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
+    mcp_call:           { section: "agent",   profiles: ["standard","coding","full"],           capabilities: { requiresNetwork: true } },
+    // Phase 7: Task API
+    task_create:        { section: "agent",   profiles: ["standard","coding","full"],           capabilities: { async: true } },
+    task_get:           { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
+    task_list:          { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
+    task_stop:          { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
+    task_output:        { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
 };
 
 // ── Registry Class ───────────────────────────────────────────────────────────

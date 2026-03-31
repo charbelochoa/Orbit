@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 
 import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync, startMemoryAutoSave } from "./memory/memory-manager.js";
 import { addMessage } from "./memory/chat-history.js";
-import { startGateway, broadcast, setTypingState } from "./gateway/server.js";
+import { startGateway, broadcast, setTypingState, updateTokenUsage, resetTokenUsage } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
 import { getQueue, TaskPriority } from "./agent/task-queue.js";
 import { TOOL_DECLARATIONS } from "./core/tool-registry.js";
@@ -181,6 +181,16 @@ async function connectGemini() {
                             setTypingState("idle");
                             if (_lastUserText) {
                                 maybeUpdateMemoryAsync(_lastUserText, _lastOrbitText).catch(() => {});
+                            }
+                        }
+                        // Capture token usage when Gemini reports it
+                        if (sc.usageMetadata) {
+                            const u = sc.usageMetadata;
+                            const inp = u.promptTokenCount       ?? u.inputTokenCount  ?? 0;
+                            const out = u.candidatesTokenCount   ?? u.outputTokenCount ?? 0;
+                            const ctx = u.totalTokenCount        ?? undefined;
+                            if (inp > 0 || out > 0) {
+                                updateTokenUsage(inp, out, ctx);
                             }
                         }
                     }

@@ -16,7 +16,8 @@
     "orbit:install": "tsx src/cli.ts install",
     "orbit:uninstall": "tsx src/cli.ts uninstall",
     "orbit:status": "tsx src/cli.ts status",
-    "orbit:logs": "tsx src/cli.ts logs"
+    "orbit:logs": "tsx src/cli.ts logs",
+    "chat": "tsx src/cli-chat.ts chat"
   },
   "bin": {
     "orbit": "./dist/cli.js"

@@ -16,9 +16,27 @@ import { statusCommand }   from "./commands/status.js";
 import { cancelCommand }   from "./commands/cancel.js";
 import { modelCommand }    from "./commands/model.js";
 import { daemonCommand }   from "./commands/daemon.js";
+import { initCommand }     from "./commands/init.js";
+import { costCommand }     from "./commands/cost.js";
+import { compactCommand }  from "./commands/compact.js";
+import { diffCommand }     from "./commands/diff.js";
+import { doctorCommand }   from "./commands/doctor.js";
+import { reviewCommand }   from "./commands/review.js";
+import { rewindCommand }   from "./commands/rewind.js";
+import { todosCommand }    from "./commands/todos.js";
+import { mcpCommand }      from "./commands/mcp.js";
+import { insightsCommand } from "./commands/insights.js";
+import { resetTokenUsage } from "../gateway/server.js";
 import type { CommandContext } from "./types.js";
 
 export function initAutoReply(): void {
+    commandRegistry.register({
+        name:        "init",
+        description: "Analiza el proyecto y genera ORBIT.md con contexto",
+        usage:       "/init [force]  — fuerza regeneración si ya existe",
+        handler:     initCommand,
+    });
+
     commandRegistry.register({
         name:        "task",
         description: "Ejecuta una tarea multi-paso con el agente",
@@ -73,6 +91,74 @@ export function initAutoReply(): void {
         handler:     daemonCommand,
     });
 
+    commandRegistry.register({
+        name:        "cost",
+        aliases:     ["usage"],
+        description: "Muestra uso de tokens y costo estimado de la sesión",
+        usage:       "/cost",
+        handler:     costCommand,
+    });
+
+    commandRegistry.register({
+        name:        "compact",
+        description: "Resumir conversación y liberar contexto",
+        usage:       "/compact [instrucciones]",
+        handler:     compactCommand,
+    });
+
+    commandRegistry.register({
+        name:        "diff",
+        description: "Muestra el git diff del proyecto",
+        usage:       "/diff [--staged] [archivo]",
+        handler:     diffCommand,
+    });
+
+    commandRegistry.register({
+        name:        "doctor",
+        aliases:     ["health"],
+        description: "Diagnóstico del sistema Orbit",
+        usage:       "/doctor",
+        handler:     doctorCommand,
+    });
+
+    commandRegistry.register({
+        name:        "review",
+        description: "Code review del diff actual con IA",
+        usage:       "/review",
+        handler:     reviewCommand,
+    });
+
+    commandRegistry.register({
+        name:        "rewind",
+        aliases:     ["undo"],
+        description: "Deshace los últimos N turnos del chat",
+        usage:       "/rewind [N]",
+        handler:     rewindCommand,
+    });
+
+    commandRegistry.register({
+        name:        "todos",
+        aliases:     ["todo"],
+        description: "Gestión de tareas inline",
+        usage:       "/todos [add|done|wip|rm|clear] [id|texto]",
+        handler:     todosCommand,
+    });
+
+    commandRegistry.register({
+        name:        "mcp",
+        description: "Gestiona servidores MCP (Model Context Protocol)",
+        usage:       "/mcp list|enable|disable|logs|tools|reload [nombre]",
+        handler:     mcpCommand,
+    });
+
+    commandRegistry.register({
+        name:        "insights",
+        aliases:     ["analytics", "stats"],
+        description: "Análisis de tus sesiones: tareas, herramientas, archivos",
+        usage:       "/insights",
+        handler:     insightsCommand,
+    });
+
     // Built-in /help command (no separate handler file needed)
     commandRegistry.register({
         name:        "help",
@@ -92,6 +178,7 @@ export function initAutoReply(): void {
         description: "Limpia el historial visible del chat",
         usage:       "/clear",
         handler:     async (ctx: CommandContext) => {
+            resetTokenUsage();
             ctx.sendReply({ type: "chat_cleared" });
             return "Historial de chat limpiado.";
         },

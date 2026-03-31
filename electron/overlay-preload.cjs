@@ -15,9 +15,11 @@ contextBridge.exposeInMainWorld("orbitOverlay", {
   onOrbSpeak:    (cb) => ipcRenderer.on("orb_speak",        (_, d) => cb(d)),
   onOrbMove:     (cb) => ipcRenderer.on("overlay_move_to",  (_, d) => cb(d)),
   onConnected:   (cb) => ipcRenderer.on("orb_connected",    (_, d) => cb(d)),
+  onContext:     (cb) => ipcRenderer.on("orb_context",      (_, d) => cb(d)),
 
   // ── Enviar eventos al main process ────────────────────────────────
   setClickThrough: (enabled) => ipcRenderer.send("overlay_click_through", enabled),
   toggleChat:      ()        => ipcRenderer.send("overlay_toggle_chat"),
   requestFocus:    ()        => ipcRenderer.send("overlay_request_focus"),
+  contextAction:   (data)    => ipcRenderer.send("overlay_context_action", data),
 });
