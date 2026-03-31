@@ -1,6 +1,7 @@
 /**
  * Orbit Provider Registry
  * Phase 2.2 — Central registry with automatic fallback chain.
+ * Phase 8.2 — Smart routing, rate-limit cooldown, health tracking.
  */
 
 import { getConfig } from "../config/config.js";
@@ -13,13 +14,51 @@ import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./
 
 const log = createLogger("Providers");
 
+// ── Phase 8.2: Provider Health Tracking ──────────────────────────────────────
+
+interface ProviderHealth {
+    totalCalls:    number;
+    totalErrors:   number;
+    totalTokensIn: number;
+    totalTokensOut: number;
+    avgLatencyMs:  number;
+    lastError?:    string;
+    lastErrorAt?:  number;
+    cooldownUntil: number;  // timestamp — if Date.now() < this, skip provider
+}
+
+// ── Smart routing hints ──────────────────────────────────────────────────────
+
+export type TaskHint = "long_context" | "tool_use" | "fast" | "private" | "code" | "general";
+
+/**
+ * Maps task hints to preferred provider order.
+ * Used by smartRoute() for automatic provider selection.
+ */
+const ROUTING_TABLE: Record<TaskHint, string[]> = {
+    long_context: ["gemini", "anthropic", "openai", "ollama"],
+    tool_use:     ["openai", "gemini", "anthropic", "ollama"],
+    fast:         ["gemini", "openai", "ollama", "anthropic"],
+    private:      ["ollama", "gemini", "openai", "anthropic"],
+    code:         ["anthropic", "openai", "gemini", "ollama"],
+    general:      ["gemini", "openai", "anthropic", "ollama"],
+};
+
+const RATE_LIMIT_COOLDOWN_MS = 60_000; // 1 minute cooldown after 429
+
 // ── Registry ─────────────────────────────────────────────────────────────────
 
 class ProviderRegistryClass {
     private providers = new Map<string, LLMProvider>();
+    private health    = new Map<string, ProviderHealth>();
 
     register(provider: LLMProvider): void {
         this.providers.set(provider.id, provider);
+        this.health.set(provider.id, {
+            totalCalls: 0, totalErrors: 0,
+            totalTokensIn: 0, totalTokensOut: 0,
+            avgLatencyMs: 0, cooldownUntil: 0,
+        });
     }
 
     get(id: string): LLMProvider | undefined {
@@ -28,6 +67,15 @@ class ProviderRegistryClass {
 
     getAvailable(): LLMProvider[] {
         return Array.from(this.providers.values()).filter(p => p.isAvailable());
+    }
+
+    /** Check if a provider is healthy (available + not in cooldown). */
+    isHealthy(id: string): boolean {
+        const p = this.providers.get(id);
+        if (!p?.isAvailable()) return false;
+        const h = this.health.get(id);
+        if (h && h.cooldownUntil > Date.now()) return false;
+        return true;
     }
 
     getDefault(): LLMProvider {
@@ -50,8 +98,7 @@ class ProviderRegistryClass {
 
     /**
      * Generate text with automatic fallback.
-     * Tries providers in the configured fallbackChain order.
-     * If no chain is configured, uses the default provider.
+     * Phase 8.2: rate-limit detection, cooldown, health tracking.
      */
     async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
         const config = getConfig();
@@ -65,17 +112,99 @@ class ProviderRegistryClass {
             const provider = this.providers.get(link.provider);
             if (!provider?.isAvailable()) continue;
 
+            // Phase 8.2: Skip provider if in cooldown
+            if (!this.isHealthy(link.provider)) {
+                const h = this.health.get(link.provider)!;
+                const remaining = Math.ceil((h.cooldownUntil - Date.now()) / 1000);
+                log.debug(`${link.provider} en cooldown (${remaining}s restantes). Saltando.`);
+                continue;
+            }
+
             try {
+                const startMs = Date.now();
                 const effectiveModel = params.model || link.model || undefined;
                 const result = await provider.generateText({ ...params, model: effectiveModel });
+                const elapsed = Date.now() - startMs;
+
+                // Update health stats
+                this.recordSuccess(link.provider, elapsed, result.usage);
                 return result;
             } catch (e: any) {
                 lastError = e;
+                this.recordError(link.provider, e);
                 log.warn(`${link.provider} failed: ${e.message}. Trying next...`);
             }
         }
 
         throw lastError || new Error("All providers in fallback chain failed or unavailable.");
+    }
+
+    /**
+     * Phase 8.2: Smart routing — choose provider based on task type.
+     * Falls back through preferred order, skipping unhealthy providers.
+     */
+    async smartGenerate(params: TextGenerationParams, hint: TaskHint = "general"): Promise<TextGenerationResult> {
+        const preferredOrder = ROUTING_TABLE[hint] || ROUTING_TABLE.general;
+
+        let lastError: Error | null = null;
+
+        for (const providerId of preferredOrder) {
+            if (!this.isHealthy(providerId)) continue;
+
+            const provider = this.providers.get(providerId);
+            if (!provider) continue;
+
+            try {
+                const startMs = Date.now();
+                const result = await provider.generateText(params);
+                this.recordSuccess(providerId, Date.now() - startMs, result.usage);
+                return result;
+            } catch (e: any) {
+                lastError = e;
+                this.recordError(providerId, e);
+                log.warn(`Smart routing: ${providerId} failed (${hint}). Trying next...`);
+            }
+        }
+
+        throw lastError || new Error(`Smart routing: all providers failed for hint '${hint}'.`);
+    }
+
+    // ── Health tracking ───────────────────────────────────────────────────────
+
+    private recordSuccess(id: string, latencyMs: number, usage?: { inputTokens: number; outputTokens: number }): void {
+        const h = this.health.get(id);
+        if (!h) return;
+        h.totalCalls++;
+        h.avgLatencyMs = Math.round((h.avgLatencyMs * (h.totalCalls - 1) + latencyMs) / h.totalCalls);
+        if (usage) {
+            h.totalTokensIn  += usage.inputTokens;
+            h.totalTokensOut += usage.outputTokens;
+        }
+    }
+
+    private recordError(id: string, error: Error): void {
+        const h = this.health.get(id);
+        if (!h) return;
+        h.totalErrors++;
+        h.lastError   = error.message.slice(0, 200);
+        h.lastErrorAt = Date.now();
+
+        // Detect rate-limit (429) and apply cooldown
+        const msg = error.message.toLowerCase();
+        if (msg.includes("429") || msg.includes("rate") || msg.includes("quota") || msg.includes("limit")) {
+            h.cooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+            log.warn(`${id} rate-limited → cooldown ${RATE_LIMIT_COOLDOWN_MS / 1000}s`);
+        }
+    }
+
+    /** Get health stats for all providers (used by /doctor, /insights). */
+    getHealthStats(): Record<string, ProviderHealth & { id: string; available: boolean }> {
+        const stats: Record<string, ProviderHealth & { id: string; available: boolean }> = {};
+        for (const [id, h] of this.health.entries()) {
+            const p = this.providers.get(id);
+            stats[id] = { ...h, id, available: !!p?.isAvailable() };
+        }
+        return stats;
     }
 
     /** List all registered provider IDs */

@@ -251,12 +251,15 @@ export const TOOL_DECLARATIONS = [
     // ── CMD / Shell ──────────────────────────────────────────────────────────
     {
         name: "cmd_control",
-        description: "Ejecuta comandos de sistema Windows (PowerShell/cmd). Úsalo para instalar programas, ejecutar scripts, consultar el sistema, gestionar procesos.",
+        description: "Ejecuta comandos de sistema Windows (PowerShell/cmd). Soporta timeout configurable y ejecución en segundo plano. Detecta automáticamente comandos de solo lectura.",
         parameters: {
             type: "OBJECT",
             properties: {
-                task:    { type: "STRING", description: "Descripción en lenguaje natural de lo que ejecutar" },
-                command: { type: "STRING", description: "Comando exacto (tiene prioridad sobre task)" }
+                task:              { type: "STRING",  description: "Descripción en lenguaje natural de lo que ejecutar" },
+                command:           { type: "STRING",  description: "Comando exacto (tiene prioridad sobre task)" },
+                cwd:               { type: "STRING",  description: "Directorio de trabajo (default: directorio del proyecto)" },
+                timeout_ms:        { type: "INTEGER", description: "Timeout en ms (default: 30000, max: 120000)" },
+                run_in_background: { type: "BOOLEAN", description: "Si true, lanza en segundo plano y retorna inmediatamente" }
             },
             required: []
         }
@@ -347,6 +350,163 @@ export const TOOL_DECLARATIONS = [
                 timeoutMs:       { type: "INTEGER", description: "Timeout en ms (default: 120000)" }
             },
             required: ["goal"]
+        }
+    },
+
+    // ── File Edit (surgical old→new replacement) ─────────────────────────────
+    {
+        name: "file_edit",
+        description: "Edita un archivo reemplazando un fragmento exacto de texto (old_string) por otro (new_string). Más seguro y eficiente que reescribir archivos enteros. old_string debe aparecer exactamente UNA vez en el archivo (salvo replace_all=true).",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                file_path:   { type: "STRING",  description: "Ruta del archivo a editar" },
+                old_string:  { type: "STRING",  description: "Texto exacto a reemplazar (incluye contexto suficiente para ser único)" },
+                new_string:  { type: "STRING",  description: "Texto nuevo que reemplaza al anterior" },
+                replace_all: { type: "BOOLEAN", description: "Si true, reemplaza TODAS las ocurrencias (default: false)" }
+            },
+            required: ["file_path", "old_string", "new_string"]
+        }
+    },
+
+    // ── Glob (file pattern search) ───────────────────────────────────────────
+    {
+        name: "glob_search",
+        description: "Busca archivos por patrón glob (ej. '**/*.ts', 'src/**/*.json', '*.md'). Devuelve la lista de archivos que coinciden. Útil para explorar la estructura del proyecto.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                pattern: { type: "STRING", description: "Patrón glob (ej. '**/*.ts', 'src/**/*.{js,ts}')" },
+                dir:     { type: "STRING", description: "Directorio base (default: directorio actual del proyecto)" }
+            },
+            required: ["pattern"]
+        }
+    },
+
+    // ── Grep (content search) ────────────────────────────────────────────────
+    {
+        name: "grep_search",
+        description: "Busca texto o regex dentro de los archivos del proyecto. Usa ripgrep si está disponible, sino búsqueda JS pura. Devuelve archivo:línea:contenido.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                pattern:      { type: "STRING",  description: "Texto o regex a buscar" },
+                dir:          { type: "STRING",  description: "Directorio base (default: directorio actual)" },
+                glob:         { type: "STRING",  description: "Filtrar por patrón de archivo (ej. '*.ts')" },
+                ignore_case:  { type: "BOOLEAN", description: "Ignorar mayúsculas/minúsculas (default: true)" },
+                max_results:  { type: "INTEGER", description: "Máximo de resultados (default: 100, max: 500)" }
+            },
+            required: ["pattern"]
+        }
+    },
+
+    // ── WebFetch (download + parse URL) ──────────────────────────────────────
+    {
+        name: "web_fetch",
+        description: "Descarga una URL, extrae el texto (HTML→texto plano), y opcionalmente resume/analiza el contenido con IA. Útil para leer documentación, APIs, o páginas web.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                url:    { type: "STRING", description: "URL completa a descargar (http/https)" },
+                prompt: { type: "STRING", description: "Instrucción opcional para resumir/analizar el contenido descargado" }
+            },
+            required: ["url"]
+        }
+    },
+
+    // ── Todo Read (agent reads tasks) ────────────────────────────────────────
+    {
+        name: "todo_read",
+        description: "Lee la lista de tareas del proyecto (.orbit/todos.json). Úsalo para ver qué tareas están pendientes, en progreso o completadas.",
+        parameters: {
+            type: "OBJECT",
+            properties: {},
+            required: []
+        }
+    },
+
+    // ── Todo Write (agent manages tasks) ─────────────────────────────────────
+    {
+        name: "todo_write",
+        description: "Crea, actualiza, completa o elimina tareas en la lista del proyecto. Las tareas se persisten en .orbit/todos.json.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action: { type: "STRING",  description: "add | update | complete | delete" },
+                text:   { type: "STRING",  description: "Texto de la tarea (para add/update)" },
+                id:     { type: "INTEGER", description: "ID de la tarea (para update/complete/delete)" },
+                status: { type: "STRING",  description: "pending | in_progress | completed (para update)" }
+            },
+            required: ["action"]
+        }
+    },
+
+    // ── MCP Tool Call (proxy to MCP server) ──────────────────────────────────
+    {
+        name: "mcp_call",
+        description: "Llama a una herramienta de un servidor MCP (Model Context Protocol) conectado. Usa /mcp list para ver servidores disponibles y /mcp tools para ver herramientas.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                tool:   { type: "STRING", description: "Nombre de la herramienta MCP" },
+                args:   { type: "OBJECT", description: "Argumentos para la herramienta" },
+                server: { type: "STRING", description: "Nombre del servidor MCP (opcional, se busca automáticamente)" }
+            },
+            required: ["tool"]
+        }
+    },
+
+    // ── Phase 7: Task API ────────────────────────────────────────────────────
+    {
+        name: "task_create",
+        description: "Crea una tarea en background que se ejecuta de forma asíncrona. Útil para tareas largas que no deben bloquear la conversación.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                description: { type: "STRING", description: "Descripción de la tarea a realizar" },
+                prompt:      { type: "STRING", description: "Prompt detallado para el agente (opcional, usa description si no se provee)" },
+                priority:    { type: "STRING", description: "low | normal | high (default: normal)" }
+            },
+            required: ["description"]
+        }
+    },
+    {
+        name: "task_get",
+        description: "Obtiene el estado y resultado de una tarea en background por su ID.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                task_id: { type: "STRING", description: "ID de la tarea" }
+            },
+            required: ["task_id"]
+        }
+    },
+    {
+        name: "task_list",
+        description: "Lista todas las tareas en background con su estado actual.",
+        parameters: { type: "OBJECT", properties: {} }
+    },
+    {
+        name: "task_stop",
+        description: "Cancela una tarea en background que está pendiente o en ejecución.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                task_id: { type: "STRING", description: "ID de la tarea a cancelar" }
+            },
+            required: ["task_id"]
+        }
+    },
+    {
+        name: "task_output",
+        description: "Obtiene el output streaming de una tarea en background.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                task_id:   { type: "STRING",  description: "ID de la tarea" },
+                from_line: { type: "INTEGER", description: "Línea desde la cual obtener output (default: 0)" }
+            },
+            required: ["task_id"]
         }
     },
 ];

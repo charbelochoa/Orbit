@@ -56,3 +56,94 @@ export async function weatherReport(parameters: any): Promise<string> { const ci
 return `No pude obtener el clima en tiempo real para ${city}. Error: ${e.message}`;
     }
 }
+
+// ─── WebFetch: download URL → text → optional AI summary ──────────────────────
+
+export async function webFetch(parameters: any): Promise<string> {
+    const url: string = parameters?.url || "";
+    const prompt: string = parameters?.prompt || "";
+    if (!url) return "Se necesita una 'url' para descargar.";
+
+    // Basic URL validation
+    let parsed: URL;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return `URL inválida: ${url}`;
+    }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+        return "Solo se permiten URLs http/https.";
+    }
+
+    console.log(`[WebFetch] Descargando: ${url}`);
+
+    try {
+        const res = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (compatible; Orbit-AI/1.0)",
+                "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
+            },
+            signal: AbortSignal.timeout(15000),
+            redirect: "follow",
+        });
+
+        if (!res.ok) return `HTTP Error ${res.status}: ${res.statusText}`;
+
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+            const json = await res.json();
+            const text = JSON.stringify(json, null, 2);
+            return text.length > 8000 ? text.slice(0, 8000) + "\n...[TRUNCADO]" : text;
+        }
+
+        const raw = await res.text();
+        // Strip HTML to rough text
+        const text = htmlToText(raw);
+        const truncated = text.length > 8000 ? text.slice(0, 8000) + "\n...[TRUNCADO]" : text;
+
+        // If there's a prompt, summarize with AI
+        if (prompt && truncated.length > 50) {
+            const apiKey = process.env.GEMINI_API_KEY;
+            if (apiKey) {
+                try {
+                    const ai = new GoogleGenAI({ apiKey });
+                    const response = await ai.models.generateContent({
+                        model: "gemini-2.0-flash",
+                        contents: [{
+                            role: "user",
+                            parts: [{ text: `Contenido de la página ${url}:\n\n${truncated}\n\n---\nInstrucción: ${prompt}` }],
+                        }],
+                    });
+                    return response.text || truncated;
+                } catch {
+                    // Fall through to raw text
+                }
+            }
+        }
+
+        return truncated;
+    } catch (e: any) {
+        return `Error descargando ${url}: ${e.message}`;
+    }
+}
+
+function htmlToText(html: string): string {
+    return html
+        // Remove scripts and styles
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        // Convert common blocks to newlines
+        .replace(/<\/?(p|div|br|h[1-6]|li|tr|blockquote)[^>]*>/gi, "\n")
+        // Remove all remaining tags
+        .replace(/<[^>]+>/g, "")
+        // Decode entities
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        // Clean whitespace
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}

@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { normalizePath } from "../core/path-utils.js";
 
 export async function fileController(parameters: any): Promise<string> {
     const action = parameters?.action?.toLowerCase().trim() || "";
@@ -13,7 +14,7 @@ if (targetPath.toLowerCase() === "desktop") targetPath = path.join(os.homedir(),
     else if (targetPath.toLowerCase() === "downloads") targetPath = path.join(os.homedir(), "Downloads");
     else if (targetPath.toLowerCase() === "documents") targetPath = path.join(os.homedir(), "Documents");
     else if (targetPath.toLowerCase() === "home" || !targetPath) targetPath = os.homedir();
-    //  Resolve absolute path targetPath = path.resolve(targetPath);
+    //  Resolve absolute path targetPath = normalizePath(targetPath);
 switch (action) { case "list": { const files = await fs.readdir(targetPath, { withFileTypes: true });
     const list = files.map(f => `${f.isDirectory() ? '[DIR]' : '[FILE]'} ${f.name}`).join("\n");
     return `Contenido de ${targetPath}:\n${list || "(Carpeta vacía)"}`; } case "read": { const content = await fs.readFile(targetPath, "utf-8");

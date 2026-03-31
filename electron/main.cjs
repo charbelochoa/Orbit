@@ -1,7 +1,7 @@
 ﻿"use strict";
 
-const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, screen } = require("electron");
-const { spawn } = require("child_process");
+const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, screen, globalShortcut, clipboard } = require("electron");
+const { spawn, execSync } = require("child_process");
 const path = require("path");
 const net = require("net");
 const fs = require("fs");
@@ -19,6 +19,7 @@ let backend = null;
 let isQuitting = false;
 let backendReady = false;
 let gatewayWs = null;
+let contextPanelVisible = false;
 
 function log(msg)  { console.log(`[Electron] ${msg}`); }
 function warn(msg) { console.warn(`[Electron] ${msg}`); }
@@ -285,6 +286,7 @@ app.whenReady().then(async () => {
   createOverlay();
   await createWindow();
   connectGatewayBridge();
+  registerGlobalHotkeys();
 });
 
 app.on("activate", () => {
@@ -299,6 +301,7 @@ app.on("window-all-closed", (e) => {
 app.on("before-quit", () => {
   log("Cerrando Orbit...");
   isQuitting = true;
+  globalShortcut.unregisterAll();
   if (gatewayWs) { try { gatewayWs.close(); } catch (_) {} gatewayWs = null; }
   if (backend) {
     backend.kill("SIGTERM");
@@ -307,3 +310,136 @@ app.on("before-quit", () => {
 });
 
 app.on("quit", () => log("Orbit cerrado."));
+
+// ── Phase 8.1: Global Hotkey + Context Detection ─────────────────────────────
+
+/**
+ * Detect which app is focused and if there's selected text.
+ * Uses PowerShell + Windows API for context awareness.
+ */
+function detectContext() {
+  const result = { app: "", title: "", selectedText: "" };
+  try {
+    // Get foreground window info
+    const psScript = `
+      Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+      using System.Text;
+      public class FGWin {
+        [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+      }
+"@
+      $h = [FGWin]::GetForegroundWindow()
+      $sb = New-Object System.Text.StringBuilder 256
+      [FGWin]::GetWindowText($h, $sb, 256) | Out-Null
+      $pid = 0
+      [FGWin]::GetWindowThreadProcessId($h, [ref]$pid) | Out-Null
+      $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+      $name = if ($proc) { $proc.ProcessName } else { "unknown" }
+      Write-Output "$name|||$($sb.ToString())"
+    `;
+    const out = execSync(`powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, {
+      timeout: 3000, windowsHide: true, encoding: "utf-8"
+    }).trim();
+    const [appName, title] = out.split("|||");
+    result.app = appName || "";
+    result.title = title || "";
+  } catch (_) {}
+
+  // Try to get clipboard text (may contain selection if Ctrl+C was pressed)
+  try {
+    result.selectedText = clipboard.readText().slice(0, 2000);
+  } catch (_) {}
+
+  return result;
+}
+
+function registerGlobalHotkeys() {
+  // Alt+Space → toggle Orbit context panel
+  const registered = globalShortcut.register("Alt+Space", () => {
+    log("Alt+Space presionado");
+    contextPanelVisible = !contextPanelVisible;
+
+    if (contextPanelVisible) {
+      const ctx = detectContext();
+      log(`Contexto: app=${ctx.app}, titulo=${ctx.title.slice(0, 40)}, texto=${ctx.selectedText.length} chars`);
+
+      // Send context to overlay
+      sendToOverlay("orb_context", {
+        visible: true,
+        app: ctx.app,
+        title: ctx.title,
+        hasText: ctx.selectedText.length > 0,
+        textPreview: ctx.selectedText.slice(0, 100),
+      });
+
+      // Also send to gateway for the agent to use
+      if (gatewayWs && gatewayWs.readyState === 1) {
+        gatewayWs.send(JSON.stringify({
+          type: "context_detected",
+          app: ctx.app,
+          title: ctx.title,
+          selectedText: ctx.selectedText,
+        }));
+      }
+
+      // Show overlay interaction
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.setIgnoreMouseEvents(false);
+      }
+    } else {
+      sendToOverlay("orb_context", { visible: false });
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+      }
+    }
+  });
+
+  if (registered) {
+    log("Hotkey global Alt+Space registrado");
+  } else {
+    warn("No se pudo registrar Alt+Space (¿ya en uso?)");
+  }
+}
+
+// Handle contextual actions from overlay
+ipcMain.on("overlay_context_action", (_, data) => {
+  const { action, selectedText } = data;
+  log(`Accion contextual: ${action}`);
+  contextPanelVisible = false;
+  sendToOverlay("orb_context", { visible: false });
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  }
+
+  // Send the action as a chat message through the gateway
+  if (gatewayWs && gatewayWs.readyState === 1) {
+    let prompt = "";
+    switch (action) {
+      case "explain":
+        prompt = `Explica este texto/código:\n\n${selectedText}`;
+        break;
+      case "refactor":
+        prompt = `Refactoriza este código:\n\n${selectedText}`;
+        break;
+      case "bugs":
+        prompt = `Busca bugs y problemas en este código:\n\n${selectedText}`;
+        break;
+      case "improve":
+        prompt = `Mejora este código/texto:\n\n${selectedText}`;
+        break;
+      default:
+        prompt = `${action}: ${selectedText}`;
+    }
+    gatewayWs.send(JSON.stringify({ type: "chat", payload: { text: prompt } }));
+  }
+
+  // Show main window with the result
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
