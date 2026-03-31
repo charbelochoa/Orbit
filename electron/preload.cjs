@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld("orbitElectron", {
 
     // Enviar evento al main process
     send: (channel, data) => {
-        const ALLOWED_CHANNELS = ["app:minimize", "app:close", "app:quit"];
+        const ALLOWED_CHANNELS = ["app:minimize", "app:close", "app:quit", "window:hide"];
         if (ALLOWED_CHANNELS.includes(channel)) {
             ipcRenderer.send(channel, data);
         }

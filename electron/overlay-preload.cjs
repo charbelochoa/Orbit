@@ -19,4 +19,5 @@ contextBridge.exposeInMainWorld("orbitOverlay", {
   // ── Enviar eventos al main process ────────────────────────────────
   setClickThrough: (enabled) => ipcRenderer.send("overlay_click_through", enabled),
   toggleChat:      ()        => ipcRenderer.send("overlay_toggle_chat"),
+  requestFocus:    ()        => ipcRenderer.send("overlay_request_focus"),
 });

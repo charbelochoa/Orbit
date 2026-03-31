@@ -7,13 +7,81 @@ export const TOOL_DECLARATIONS = [
     // ── Open any app ────────────────────────────────────────────────────────
     {
         name: "open_app",
-        description: "Abre cualquier aplicación en el ordenador Windows. Úsalo cuando el usuario pida abrir, lanzar o iniciar cualquier app, sitio web o programa. SIEMPRE llama a este tool — nunca digas solo que lo abriste.",
+        description: "Abre cualquier aplicación en el ordenador Windows. Úsalo cuando el usuario pida abrir, lanzar o iniciar cualquier app, sitio web o programa. Conoce ~50 apps por alias (chrome, vscode, discord, spotify, etc.).",
         parameters: {
             type: "OBJECT",
             properties: {
-                app_name: { type: "STRING", description: "Nombre exacto de la aplicación (ej. 'WhatsApp', 'Chrome', 'Spotify', 'Notepad')" }
+                app_name: { type: "STRING", description: "Nombre de la aplicación (ej. 'WhatsApp', 'Chrome', 'Spotify', 'Notepad', 'Discord')" }
             },
             required: ["app_name"]
+        }
+    },
+
+    // ── Computer settings (volume, brightness, windows) ─────────────────
+    {
+        name: "computer_settings",
+        description: "Controla ajustes del sistema: volumen (subir/bajar/mutear/fijar), brillo, cerrar apps, minimizar/maximizar ventanas, snap left/right, mostrar escritorio, pantalla completa. Acepta acción directa o texto natural.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action: {
+                    type: "STRING",
+                    description: "volume_up | volume_down | volume_mute | volume_set | brightness_up | brightness_down | brightness_set | close_app | minimize | maximize | snap_left | snap_right | show_desktop | switch_window | full_screen"
+                },
+                value: { type: "INTEGER", description: "Valor numérico (porcentaje para volumen/brillo, cantidad para subir/bajar)" },
+                app:   { type: "STRING",  description: "Nombre de app para close_app" },
+                task:  { type: "STRING",  description: "Texto natural si no sabes la acción exacta (ej. 'baja el volumen a la mitad')" }
+            },
+            required: []
+        }
+    },
+
+    // ── Code helper ─────────────────────────────────────────────────────────
+    {
+        name: "code_helper",
+        description: "Genera, ejecuta, corrige y explica código. Soporta Python, JavaScript, TypeScript, PowerShell, Batch. Loop automático write→run→fix (3 intentos). Úsalo cuando el usuario pida escribir scripts, código, o ejecutar algo programático.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action:    { type: "STRING", description: "write | run | fix | explain" },
+                task:      { type: "STRING", description: "Descripción de lo que debe hacer el código (para write)" },
+                language:  { type: "STRING", description: "python | javascript | typescript | powershell | batch (default: python)" },
+                file_path: { type: "STRING", description: "Ruta del archivo (para run/fix/explain)" },
+                auto_run:  { type: "BOOLEAN", description: "Si true (default), ejecuta tras generar (para write)" }
+            },
+            required: ["action"]
+        }
+    },
+
+    // ── Send message ─────────────────────────────────────────────────────────
+    {
+        name: "send_message",
+        description: "Envía mensajes por WhatsApp Web o Telegram Web usando el navegador. Puede enviar a un número de teléfono o buscar un contacto por nombre.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                platform: { type: "STRING", description: "whatsapp | telegram (default: whatsapp)" },
+                contact:  { type: "STRING", description: "Número de teléfono (con código de país) o nombre del contacto" },
+                message:  { type: "STRING", description: "El mensaje a enviar" }
+            },
+            required: ["contact", "message"]
+        }
+    },
+
+    // ── Reminder ─────────────────────────────────────────────────────────────
+    {
+        name: "reminder",
+        description: "Crea, lista o elimina recordatorios usando Windows Task Scheduler. Los recordatorios aparecen como popup en la hora indicada.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action:   { type: "STRING", description: "create | list | delete (default: create)" },
+                message:  { type: "STRING", description: "Texto del recordatorio (para create)" },
+                datetime: { type: "STRING", description: "Fecha/hora: 'YYYY-MM-DD HH:mm' o 'HH:mm' para hoy (para create)" },
+                name:     { type: "STRING", description: "Nombre identificador del recordatorio (para delete)" },
+                all:      { type: "BOOLEAN", description: "true para eliminar todos los recordatorios (para delete)" }
+            },
+            required: []
         }
     },
 
@@ -72,11 +140,12 @@ export const TOOL_DECLARATIONS = [
     // ── Screen vision (Gemini multimodal) ────────────────────────────────────
     {
         name: "screen_vision",
-        description: "Toma una captura de pantalla y la analiza visualmente con IA. Úsalo para describir lo que hay en pantalla, encontrar texto, leer contenido, entender la UI actual, o verificar si una acción tuvo efecto.",
+        description: "Toma una captura de pantalla o foto de la webcam y la analiza visualmente con IA. Úsalo para describir lo que hay en pantalla, leer contenido, verificar acciones, o ver por la cámara qué hay frente al ordenador.",
         parameters: {
             type: "OBJECT",
             properties: {
-                text: { type: "STRING", description: "Pregunta o instrucción sobre lo que se ve en pantalla" }
+                text:  { type: "STRING", description: "Pregunta o instrucción sobre lo que se ve" },
+                angle: { type: "STRING", description: "screen (captura de pantalla, default) | camera (webcam)" }
             },
             required: ["text"]
         }
@@ -202,6 +271,80 @@ export const TOOL_DECLARATIONS = [
             properties: {
                 goal:     { type: "STRING", description: "Descripción completa de la tarea a realizar" },
                 priority: { type: "STRING", description: "low | normal | high (por defecto: normal)" }
+            },
+            required: ["goal"]
+        }
+    },
+
+    // ── Screen Find (Gemini Vision element locator) ──────────────────────────
+    {
+        name: "screen_find",
+        description: "Busca CUALQUIER elemento visual en pantalla por descripción usando Gemini Vision. Devuelve las coordenadas (x, y) exactas del centro del elemento. Úsalo para encontrar botones, textos, iconos, perfiles, imágenes, o cualquier cosa visible en pantalla antes de hacer click.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                description: { type: "STRING", description: "Descripción del elemento a buscar (ej. 'perfil OCHOA ROJAS', 'botón Aceptar', 'icono de WhatsApp en la barra de tareas', 'campo de búsqueda')" }
+            },
+            required: ["description"]
+        }
+    },
+
+    // ── Click Element (find + click in one step) ─────────────────────────────
+    {
+        name: "click_element",
+        description: "Busca un elemento en pantalla por descripción visual y hace click sobre él con movimiento natural del mouse (curva Bézier). Combina screen_find + click en un solo paso. ÚSALO SIEMPRE que necesites hacer click en algo que ves en pantalla (botones, perfiles, iconos, links, texto).",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                description: { type: "STRING", description: "Descripción visual del elemento a clickear (ej. 'perfil OCHOA ROJAS', 'botón Enviar', 'pestaña WhatsApp', 'X para cerrar')" },
+                click_type:  { type: "STRING", description: "left (default) | right | double" }
+            },
+            required: ["description"]
+        }
+    },
+
+    // ── Drag (mouse drag from A to B) ────────────────────────────────────────
+    {
+        name: "drag",
+        description: "Arrastra el mouse desde un punto a otro manteniendo el botón presionado. Útil para mover ventanas, redimensionar, sliders, arrastrar archivos.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                from_x: { type: "INTEGER", description: "X de inicio (0 = posición actual)" },
+                from_y: { type: "INTEGER", description: "Y de inicio (0 = posición actual)" },
+                to_x:   { type: "INTEGER", description: "X de destino" },
+                to_y:   { type: "INTEGER", description: "Y de destino" }
+            },
+            required: ["to_x", "to_y"]
+        }
+    },
+
+    // ── Screen Context (full visual analysis) ────────────────────────────────
+    {
+        name: "screen_context",
+        description: "Captura la pantalla y describe TODO lo que ve: ventanas abiertas, botones, textos, iconos, barra de tareas. Úsalo para entender qué hay en pantalla antes de decidir qué acción tomar. Más detallado que screen_vision, enfocado en elementos interactuables.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                focus: { type: "STRING", description: "Área o tema específico en el que enfocarte (ej. 'el selector de perfiles de Chrome', 'la barra de tareas')" }
+            },
+            required: []
+        }
+    },
+
+    // ── Spawn subagent (Phase 4.1) ───────────────────────────────────────────
+    {
+        name: "spawn_subagent",
+        description: "Crea y lanza un subagente autónomo especializado para ejecutar una sub-tarea de forma independiente. El subagente planifica y ejecuta sus propios pasos en paralelo con el agente principal. Úsalo para delegar tareas que no dependen del resultado de otras.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                goal:            { type: "STRING",  description: "Objetivo completo que debe lograr el subagente" },
+                context:         { type: "STRING",  description: "Contexto adicional (datos, rutas, restricciones)" },
+                parentSessionId: { type: "STRING",  description: "ID de sesión padre para correlacionar eventos (opcional)" },
+                toolProfile:     { type: "STRING",  description: "minimal | standard | coding | full (default: hereda del padre)" },
+                maxSteps:        { type: "INTEGER", description: "Límite de pasos del subagente (default: 8)" },
+                timeoutMs:       { type: "INTEGER", description: "Timeout en ms (default: 120000)" }
             },
             required: ["goal"]
         }

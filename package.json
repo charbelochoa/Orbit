@@ -11,7 +11,15 @@
     "build": "tsc",
     "build:electron": "tsc && electron-builder",
     "pack": "tsc && electron-builder --dir",
-    "start": "node --experimental-specifier-resolution=node dist/index.js"
+    "start": "node --experimental-specifier-resolution=node dist/index.js",
+    "cli": "tsx src/cli.ts",
+    "orbit:install": "tsx src/cli.ts install",
+    "orbit:uninstall": "tsx src/cli.ts uninstall",
+    "orbit:status": "tsx src/cli.ts status",
+    "orbit:logs": "tsx src/cli.ts logs"
+  },
+  "bin": {
+    "orbit": "./dist/cli.js"
   },
   "dependencies": {
     "@google/genai": "latest",
@@ -20,7 +28,9 @@
     "node-notifier": "^10.0.1",
     "puppeteer-core": "^23.6.1",
     "screenshot-desktop": "^1.15.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
@@ -54,7 +64,10 @@
       {
         "from": "engine",
         "to": "engine",
-        "filter": ["**/*", "!models/.gitkeep"]
+        "filter": [
+          "**/*",
+          "!models/.gitkeep"
+        ]
       },
       {
         "from": "config",
@@ -63,7 +76,12 @@
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.png",
       "requestedExecutionLevel": "asInvoker"

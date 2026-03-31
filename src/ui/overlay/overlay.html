@@ -10,6 +10,7 @@ html,body{
   background:transparent;
   -webkit-app-region:no-drag;
   user-select:none;cursor:default;
+  pointer-events:none;
 }
 
 #mascot-container{
@@ -17,6 +18,7 @@ html,body{
   width:64px;height:84px;
   bottom:40px;right:40px;
   z-index:10;cursor:grab;
+  pointer-events:auto;
 }
 #mascot-container:active{cursor:grabbing}
 #mascot-container.dragging{transition:none!important}
@@ -444,19 +446,22 @@ function updatePhysics(dt) {
 // ── Mouse interaction ──────────────────────────────────────────────
 let mouseOverMascot = false;
 
-document.addEventListener('mousemove', (e) => {
-  const rect = container.getBoundingClientRect();
-  const isOver = (
-    e.clientX >= rect.left  - 10 && e.clientX <= rect.right  + 10 &&
-    e.clientY >= rect.top   - 10 && e.clientY <= rect.bottom + 10
-  );
-  if (isOver && !mouseOverMascot) {
-    mouseOverMascot = true;
-    window.orbitOverlay?.setClickThrough(false);
-  } else if (!isOver && mouseOverMascot && !physics.isDragging) {
+// El mascot container tiene pointer-events:auto, el resto del body es none.
+// Cuando el mouse entra en el mascot, pedimos al main process que desactive
+// click-through para poder recibir clics reales (mousedown, dblclick).
+container.addEventListener('mouseenter', () => {
+  mouseOverMascot = true;
+  window.orbitOverlay?.setClickThrough(false);
+});
+
+container.addEventListener('mouseleave', () => {
+  if (!physics.isDragging) {
     mouseOverMascot = false;
     window.orbitOverlay?.setClickThrough(true);
   }
+});
+
+container.addEventListener('mousemove', (e) => {
   if (physics.isDragging) {
     physics.x = e.clientX - physics.dragOffX;
     physics.y = e.clientY - physics.dragOffY;
@@ -466,6 +471,8 @@ document.addEventListener('mousemove', (e) => {
 });
 
 container.addEventListener('mousedown', (e) => {
+  // Asegurar que no haya click-through activo al interactuar
+  window.orbitOverlay?.setClickThrough(false);
   physics.isDragging = true;
   physics.dragOffX   = e.clientX - physics.x;
   physics.dragOffY   = e.clientY - physics.y;
@@ -479,8 +486,10 @@ document.addEventListener('mouseup', () => {
   physics.isDragging = false;
   physics.vx = 0; physics.vy = 0;
   container.classList.remove('dragging');
-  window.orbitOverlay?.setClickThrough(true);
-  mouseOverMascot = false;
+  // Restaurar click-through si ya no estamos sobre el mascot
+  if (!mouseOverMascot) {
+    window.orbitOverlay?.setClickThrough(true);
+  }
 });
 
 container.addEventListener('dblclick', () => {
@@ -522,23 +531,8 @@ function spawnSparkles(count) {
     s.style.top  = (10 + Math.random() * 34) + 'px';
     s.style.animationDelay = (Math.random() * 0.3) + 's';
     const hue = 245 + Math.random() * 60;
-    s.style.background = `hsl(${hue}, 80%, 72%)`;
-    container.appendChild(s);
-    setTimeout(() => s.remove(), 1000);
-  }
-}
-
-function spawnParticle() {
-  const p = document.createElement('div');
-  p.className = 'particle';
-  p.style.left   = (-10 + Math.random() * 84) + 'px';
-  p.style.top    = (-5  + Math.random() * 44) + 'px';
-  p.style.animationDuration = (2 + Math.random() * 3) + 's';
-  p.style.animationDelay   = (Math.random() * 2) + 's';
-  p.style.opacity = 0.12 + Math.random() * 0.25;
-  p.style.width = p.style.height = (1.5 + Math.random() * 2) + 'px';
-  const hue = 250 + Math.random() * 40;
-  p.style.background = `hsla(${hue}, 70%, 70%, 0.4)`;
+    s.style.background = `hsl(${hue}, 80%, 72%)`; container.appendChild(s); setTimeout(() => s.remove(), 1000); }
+} function spawnParticle() { const p = document.createElement('div'); p.className = 'particle'; p.style.left = (-10 + Math.random() * 84) + 'px'; p.style.top = (-5 + Math.random() * 44) + 'px'; p.style.animationDuration = (2 + Math.random() * 3) + 's'; p.style.animationDelay = (Math.random() * 2) + 's'; p.style.opacity = 0.12 + Math.random() * 0.25; p.style.width = p.style.height = (1.5 + Math.random() * 2) + 'px'; const hue = 250 + Math.random() * 40; p.style.background = `hsla(${hue}, 70%, 70%, 0.4)`;
   container.appendChild(p);
   setTimeout(() => p.remove(), 5000);
 }
@@ -574,8 +568,8 @@ if (window.orbitOverlay) {
       thinking:  ['Pensando...', 0],
       speaking:  ['...', 0],
       listening: ['Escuchando...', 0],
-      error:     ['Algo falló 😕', 4000],
-      happy:     ['¡Hecho! ✨', 3000],
+      error:     ['Algo falló ', 4000],
+      happy:     ['¡Hecho! ', 3000],
       sleeping:  ['ZZZ...', 0],
     };
     if (bubbles[state]) showBubble(...bubbles[state]);

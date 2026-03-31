@@ -1,0 +1,67 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Orbit AI — Configuration
+#  Environment variables: ${VAR_NAME}
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+providers:
+  gemini:
+    apiKey: "${GEMINI_API_KEY}"
+    models:
+      live: "gemini-2.5-flash-native-audio-latest"
+      fast: "gemini-2.5-flash-lite"
+      pro:  "gemini-2.5-pro"
+
+  openai:
+    apiKey: "${OPENAI_API_KEY}"
+    baseUrl: "https://api.openai.com/v1"
+    models:
+      default: "gpt-4o-mini"
+
+  anthropic:
+    apiKey: "${ANTHROPIC_API_KEY}"
+    models:
+      default: "claude-sonnet-4-20250514"
+
+  ollama:
+    baseUrl: "http://localhost:11434"
+    models:
+      default: "llama3"
+
+# Primary provider for text generation (gemini | openai | anthropic | ollama)
+defaultProvider: "gemini"
+
+# If the primary fails, try these in order
+fallbackChain:
+  - provider: "gemini"
+    model: "gemini-2.5-flash-lite"
+  - provider: "openai"
+    model: "gpt-4o-mini"
+  - provider: "ollama"
+    model: "llama3"
+
+# Voice settings (Gemini Live API only)
+voice:
+  voiceName: "Aoede"
+  language: "es"
+
+# Tool profile: minimal | standard | coding | full
+toolProfile: "full"
+
+# Security (Phase 6 — approval system)
+security:
+  approvalRequired: false
+  allowedPaths: []
+
+# Server ports
+server:
+  gatewayPort: 18789
+  webPort: 3000
+
+# Python Vision Engine (YOLO sidecar)
+engine:
+  pythonPort: 18790
+  heartbeatInterval: 30000
+
+# Logging level: debug | info | warn | error
+logging:
+  level: "info"

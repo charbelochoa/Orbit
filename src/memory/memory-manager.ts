@@ -39,6 +39,22 @@ async function saveMemory(mem: MemoryStore): Promise<void> {
     await fs.writeFile(MEMORY_PATH, JSON.stringify(mem, null, 2), "utf-8");
 }
 
+// Auto-save: persist memory to disk every 5 minutes (resilience)
+let _autoSaveTimer: ReturnType<typeof setInterval> | null = null;
+export function startMemoryAutoSave(): void {
+    if (_autoSaveTimer) return;
+    _autoSaveTimer = setInterval(async () => {
+        try {
+            const mem = await loadMemory();
+            await saveMemory(mem);
+            console.log("[Memory] Auto-save completado");
+        } catch (e: any) {
+            console.warn("[Memory] Auto-save falló:", e.message);
+        }
+    }, 5 * 60 * 1000);
+    console.log("[Memory] Auto-save activado (cada 5 min)");
+}
+
 function mergeInto(target: any, updates: any): boolean {
     let changed = false;
     for (const [k, v] of Object.entries(updates)) {
@@ -65,62 +81,48 @@ export async function updateMemory(updates: Partial<MemoryStore>): Promise<void>
     }
     if (changed) {
         await saveMemory(mem);
-        console.log("[Memory] 💾 Memoria actualizada:", Object.keys(updates));
+        console.log("[Memory] Memoria actualizada:", Object.keys(updates));
     }
 }
 
 export function formatMemoryForPrompt(mem: MemoryStore): string {
     const lines: string[] = [];
     const id = mem.identity;
-    if (id?.name?.value)     lines.push(`Nombre del usuario: ${id.name.value}`);
-    if (id?.city?.value)     lines.push(`Ciudad: ${id.city.value}`);
-    if (id?.age?.value)      lines.push(`Edad: ${id.age.value}`);
-
+    if (id?.name?.value) lines.push(`Nombre del usuario: ${id.name.value}`);
+    if (id?.city?.value) lines.push(`Ciudad: ${id.city.value}`);
+    if (id?.age?.value) lines.push(`Edad: ${id.age.value}`);
     for (const [k, v] of Object.entries(mem.preferences || {}).slice(0, 5)) {
         lines.push(`${k}: ${(v as any).value}`);
     }
     for (const [k, v] of Object.entries(mem.notes || {}).slice(0, 3)) {
         lines.push(`${k}: ${(v as any).value}`);
     }
-
     if (!lines.length) return "Sin datos guardados del usuario.";
     return "[MEMORIA DEL USUARIO]\n" + lines.map(l => `- ${l}`).join("\n");
 }
 
-// Actualizar memoria asincrónicamente tras cada turno de conversación
 export async function maybeUpdateMemoryAsync(userText: string, assistantText: string): Promise<void> {
     _turnCounter++;
     if (_turnCounter % MEMORY_EVERY_N_TURNS !== 0) return;
     if (userText.length < 10 || userText === _lastInput) return;
     _lastInput = userText;
-
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return;
-
     try {
         const ai = new GoogleGenAI({ apiKey });
-
-        // Stage 1: ¿Hay datos personales? (barato, ~5 tokens output)
         const check = await ai.models.generateContent({
             model: "gemini-2.5-flash-lite",
-            contents: [{ role: "user", parts: [{ text:
-                `Does this message contain personal facts about the user (name, age, city, job, hobby, relationship, birthday, preference)? Reply ONLY YES or NO.\n\nMessage: ${userText.slice(0, 300)}`
-            }] }]
+            contents: [{ role: "user", parts: [{ text: `Does this message contain personal facts about the user (name, age, city, job, hobby, relationship, birthday, preference)? Reply ONLY YES or NO.\n\nMessage: ${userText.slice(0, 300)}` }] }]
         });
         if (!check.text?.toUpperCase().includes("YES")) return;
-
-        // Stage 2: Extracción completa
         const extract = await ai.models.generateContent({
             model: "gemini-2.5-flash-lite",
-            contents: [{ role: "user", parts: [{ text:
-                `Extract personal facts. Return ONLY valid JSON or {} if nothing:\n{"identity":{"name":{"value":"..."}},"preferences":{"hobby":{"value":"..."}},"notes":{"job":{"value":"..."}}}\n\nMessage: ${userText.slice(0, 500)}\n\nJSON:`
-            }] }]
+            contents: [{ role: "user", parts: [{ text: `Extract personal facts. Return ONLY valid JSON or {} if nothing:\n{"identity":{"name":{"value":"..."}},"preferences":{"hobby":{"value":"..."}},"notes":{"job":{"value":"..."}}}\n\nMessage: ${userText.slice(0, 500)}\n\nJSON:` }] }]
         });
-
-        let raw = (extract.text || "{}").replace(/```(json)?/gi, "").trim();
+        const raw = (extract.text || "{}").replace(/```(json)?/gi, "").trim();
         const data = JSON.parse(raw);
         if (Object.keys(data).length) await updateMemory(data);
     } catch (e: any) {
-        if (!e.message?.includes("429")) console.warn("[Memory] ⚠️", e.message);
+        if (!e.message?.includes("429")) console.warn("[Memory] ", e.message);
     }
 }

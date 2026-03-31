@@ -8,26 +8,26 @@
 
 | Componente | Estado | Calidad |
 |---|---|---|
-| Gemini Live API (WebSocket raw) | ✅ Funciona | Buena |
-| Memoria (JSON + SQLite) | ✅ Funciona | Básica — sin compactación, sin búsqueda semántica |
-| Agente Planner/Executor | ✅ Funciona | Básico — sin retry inteligente, sin replan |
-| Error Handler | ✅ Funciona | Solo patrones regex, sin LLM |
-| Task Queue | ✅ Funciona | Sin notificaciones, sin cancel granular |
-| Actions (browser/computer/cmd/file/screen/web) | ✅ Funciona | Sólida base |
-| Web UI + Gateway WebSocket | ✅ Funciona | Básica |
-| Python YOLO Vision Sidecar | ✅ Funciona | Sin cambios |
-| Electron + System Tray | ✅ Funciona | Integrado |
-| Chat UI Dark Purple v2 | ✅ Funciona | Diseño portado de orbit-chat |
-| Pixel Art Orb Overlay | ✅ Funciona | Portado de orbit-chat, gateway bridge |
-| Typing Indicators | ✅ Funciona | 3 estados en UI + orbe |
-| Plugin System | ❌ No existe | — |
-| Hook System | ❌ No existe | — |
-| Skills System | ❌ No existe | — |
-| Multi-Provider | ❌ Solo Gemini | — |
-| Command Detection | ❌ No existe | — |
-| Daemon / Autostart | ❌ No existe | — |
-| Memory Compaction | ❌ No existe | — |
-| Semantic Memory Search | ❌ No existe | — |
+| Gemini Live API (WebSocket raw) |  Funciona | Buena |
+| Memoria (JSON + SQLite) |  Funciona | Básica — sin compactación, sin búsqueda semántica |
+| Agente Planner/Executor |  Funciona | Básico — sin retry inteligente, sin replan |
+| Error Handler |  Funciona | Solo patrones regex, sin LLM |
+| Task Queue |  Funciona | Sin notificaciones, sin cancel granular |
+| Actions (browser/computer/cmd/file/screen/web) |  Funciona | Sólida base |
+| Web UI + Gateway WebSocket |  Funciona | Básica |
+| Python YOLO Vision Sidecar |  Funciona | Sin cambios |
+| Electron + System Tray |  Funciona | Integrado |
+| Chat UI Dark Purple v2 |  Funciona | Diseño portado de orbit-chat |
+| Pixel Art Orb Overlay |  Funciona | Portado de orbit-chat, gateway bridge |
+| Typing Indicators |  Funciona | 3 estados en UI + orbe |
+| Plugin System |  No existe | — |
+| Hook System |  No existe | — |
+| Skills System |  No existe | — |
+| Multi-Provider |  Solo Gemini | — |
+| Command Detection |  No existe | — |
+| Daemon / Autostart |  No existe | — |
+| Memory Compaction |  No existe | — |
+| Semantic Memory Search |  No existe | — |
 
 ---
 
@@ -42,21 +42,21 @@
 │  │  (Tray+Win) │    │  (port 3000) │    │  orbit install    │  │
 │  └──────┬──────┘    └──────┬───────┘    └────────┬──────────┘  │
 │         │                  │                     │             │
-│         └──────────────────▼─────────────────────┘             │
+│         └───────────────────────────────────────┘             │
 │                     ┌──────────────┐                           │
 │                     │   Gateway    │  WebSocket :18789         │
 │                     │  (server.ts) │  + ReplyDispatcher        │
 │                     │  Commands /  │  + Typing Indicators      │
 │                     └──────┬───────┘                           │
 │                            │                                   │
-│              ┌─────────────▼──────────────┐                    │
+│              ┌───────────────────────────┐                    │
 │              │         CORE ENGINE         │                    │
 │              │       (index.ts)            │                    │
 │              │  Gemini Live ↔ Tool Router  │                    │
 │              │  Hook invocation pipeline   │                    │
 │              └──┬─────────┬───────────┬───┘                    │
 │                 │         │           │                        │
-│         ┌───────▼──┐  ┌───▼────┐  ┌──▼──────────┐            │
+│         ┌─────────┐  ┌───────┐  ┌────────────┐            │
 │         │ Context  │  │ Agent  │  │  Plugin      │            │
 │         │ Engine   │  │ v2     │  │  System      │            │
 │         │(Memory)  │  │Planner │  │ registry.ts  │            │
@@ -66,7 +66,7 @@
 │         │compact   │  │Queue   │  │              │            │
 │         └────┬─────┘  └───┬────┘  └──────┬───────┘            │
 │              │             │              │                    │
-│         ┌────▼──┐    ┌─────▼───┐   ┌─────▼──────┐            │
+│         ┌──────┐    ┌────────┐   ┌───────────┐            │
 │         │Legacy │    │Skills   │   │Providers   │            │
 │         │LanceDB│    │Registry │   │Gemini      │            │
 │         │(slot) │    │SKILL.md │   │Anthropic   │            │
@@ -389,7 +389,7 @@ name: web-research
 description: 'Cuándo usar: buscar información actual, comparar opciones, obtener datos de noticias...'
 metadata:
   orbit:
-    emoji: 🔍
+    emoji: 
     category: research
     tools: [web_search, browser_control, file_controller]
 ---
@@ -400,7 +400,7 @@ metadata:
 2. `browser_control go_to` para leer artículos completos
 3. `file_controller write` para guardar el resumen
 
-## ⚠️ Reglas
+##  Reglas
 - SIEMPRE cita las fuentes
 - NO inventes datos — si no encuentras algo, dilo
 ...
@@ -604,26 +604,26 @@ orbit logs       → Últimas 100 líneas de logs
 **Nuevo layout:**
 ```
 ┌─────────────────────────────────────────────────────┐
-│  🛸 ORBIT AI          [Gemini ●]  [v2.0]  [⚙️ Settings] │
+│   ORBIT AI          [Gemini ]  [v2.0]  [ Settings] │
 ├──────────────┬──────────────────────────────────────┤
 │              │                                      │
-│  📋 TASKS    │  💬 CHAT                             │
+│   TASKS    │   CHAT                             │
 │  ─────────── │  ─────────────────────────────────── │
-│  ● Researching│ [User] investiga los mejores...     │
+│   Researching│ [User] investiga los mejores...     │
 │    AI trends  │                                     │
-│  ○ Pending    │ [Orbit] 🤔 Pensando...              │
-│  ─────────── │   └─ 🔧 web_search                  │
-│  🧠 MEMORY   │      └─ "AI frameworks 2025"        │
+│   Pending    │ [Orbit]  Pensando...              │
+│  ─────────── │   └─  web_search                  │
+│   MEMORY   │      └─ "AI frameworks 2025"        │
 │  ─────────── │                                     │
 │  • Nombre: HP │ [Orbit] He encontrado los siguientes│
 │  • Ciudad: MX │ frameworks más relevantes...       │
 │  • Proyecto:  │                                    │
 │    Orbit AI   │                                    │
 │  ─────────── │ ┌─────────────────────────────────┐ │
-│  🔧 TOOLS    │ │ > Pregunta a Orbit...       [↑] │ │
-│  web_search ✓ │ └─────────────────────────────────┘ │
-│  browser    ✓ │                                    │
-│  computer   ✓ │                                    │
+│   TOOLS    │ │ > Pregunta a Orbit...       [↑] │ │
+│  web_search  │ └─────────────────────────────────┘ │
+│  browser     │                                    │
+│  computer    │                                    │
 └──────────────┴──────────────────────────────────────┘
 ```
 
@@ -704,13 +704,13 @@ const PAL = {
 **Estados del orbe:**
 | Estado | Color dot | Animación | Cuándo |
 |--------|-----------|-----------|--------|
-| idle | 🟣 purple | bobbing suave | Sin actividad |
-| listening | 🟢 green | vibra | Escuchando voz |
-| thinking | 🟡 yellow | parpadea | Gemini procesando |
-| speaking | 🔵 blue | bounce | Respuesta llegando |
-| error | 🔴 red | shake | Error ocurrió |
-| happy | 🟣 purple | jump | Tarea completada |
-| sleeping | ⚪ gray | zzz | Sin actividad 5min |
+| idle |  purple | bobbing suave | Sin actividad |
+| listening |  green | vibra | Escuchando voz |
+| thinking |  yellow | parpadea | Gemini procesando |
+| speaking |  blue | bounce | Respuesta llegando |
+| error |  red | shake | Error ocurrió |
+| happy |  purple | jump | Tarea completada |
+| sleeping |  gray | zzz | Sin actividad 5min |
 
 **Speech bubble:**
 ```css
@@ -811,22 +811,22 @@ contextBridge.exposeInMainWorld('orbitOverlay', {
 **Layout del Chat Window:**
 ```
 ┌─────────────────────────────────────────────────────┐
-│  [●][⊡][✕]  🛸 ORBIT   ────── DRAG REGION ─────── │ ← Titlebar custom
+│  [][⊡][]   ORBIT   ────── DRAG REGION ─────── │ ← Titlebar custom
 │─────────────────────────────────────────────────────│
-│  Header: [🟣 Gemini Live ●] [● Conectado]           │
+│  Header: [ Gemini Live ] [ Conectado]           │
 │─────────────────────────────────────────────────────│
 │                                                     │
 │  [User] Investiga los mejores frameworks de IA      │  ← Burbuja usuario (right-aligned)
 │                                                     │
-│  [🛸] Orbit está pensando...                        │  ← Typing indicator
-│      ● ● ●                                         │
+│  [] Orbit está pensando...                        │  ← Typing indicator
+│                                                 │
 │                                                     │
-│  [🛸] He encontrado los siguientes frameworks:      │  ← Burbuja Orbit (left-aligned)
-│      ▼ web_search: "AI frameworks 2025"            │  ← Tool call colapsable
-│        📋 5 resultados encontrados                  │
+│  [] He encontrado los siguientes frameworks:      │  ← Burbuja Orbit (left-aligned)
+│       web_search: "AI frameworks 2025"            │  ← Tool call colapsable
+│         5 resultados encontrados                  │
 │                                                     │
 │─────────────────────────────────────────────────────│
-│  [🎤] > Escribe o habla con Orbit...         [▶️]  │ ← Input area
+│  [] > Escribe o habla con Orbit...         []  │ ← Input area
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -837,12 +837,12 @@ contextBridge.exposeInMainWorld('orbitOverlay', {
 <!-- Draggable solo en la región del titlebar -->
 <div class="titlebar" style="-webkit-app-region: drag">
   <div class="traffic-lights" style="-webkit-app-region: no-drag">
-    <button class="btn-close" onclick="minimize()">●</button>
+    <button class="btn-close" onclick="minimize()"></button>
     <button class="btn-max" onclick="maximize()">⊡</button>
-    <button class="btn-quit" onclick="closeWindow()">✕</button>
+    <button class="btn-quit" onclick="closeWindow()"></button>
   </div>
-  <span class="title">🛸 ORBIT</span>
-  <div class="status-badge">● Conectado</div>
+  <span class="title"> ORBIT</span>
+  <div class="status-badge"> Conectado</div>
 </div>
 ```
 
@@ -893,7 +893,7 @@ contextBridge.exposeInMainWorld('orbitOverlay', {
 **Tool call inline colapsable:**
 ```html
 <details class="tool-call">
-  <summary>🔧 web_search: "AI frameworks 2025"</summary>
+  <summary> web_search: "AI frameworks 2025"</summary>
   <pre class="tool-result">{ "results": [...] }</pre>
 </details>
 ```

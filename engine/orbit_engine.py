@@ -14,6 +14,12 @@ Works in tandem with vision-control.ts in the TypeScript Orbit app.
 from __future__ import annotations
 import sys
 import os
+
+# Force UTF-8 output on Windows (avoids cp1252 emoji errors)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 import json
 import time
 import math
@@ -53,6 +59,36 @@ CLASS_ALIASES = {
     "icon":       "icono",
     "icono":      "icono",
 }
+
+# ─── Camera Index Cache ───────────────────────────────────────────────────────
+_camera_index: int | None = None
+
+def _get_camera_index() -> int:
+    """Auto-detect working camera index (0-5). Caches result."""
+    global _camera_index
+    if _camera_index is not None:
+        return _camera_index
+
+    import cv2
+    import numpy as np
+    print("[OrbitEngine] 🔍 Auto-detectando índice de cámara...")
+    for i in range(6):
+        try:
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None and frame.mean() > 5:
+                    print(f"[OrbitEngine] ✅ Cámara detectada en índice {i}")
+                    _camera_index = i
+                    return i
+            else:
+                cap.release()
+        except Exception:
+            pass
+    print("[OrbitEngine] ⚠️ No se detectó cámara, usando índice 0")
+    _camera_index = 0
+    return 0
 
 # ─── DPI Awareness (MUST run in main thread on Windows) ──────────────────────
 def _set_dpi_awareness():
@@ -134,7 +170,7 @@ def capture_screen():
 def run_detection(conf: float = DEFAULT_CONF) -> dict[str, Any]:
     """Capture screen and run YOLO. Returns detections dict."""
     if _model is None:
-        return {"error": _model_error or "Modelo no cargado.", "detections": []}
+        return {"error": _model_error or "Modelo no cargado.", "detections": [], "fallback": True}
 
     try:
         import numpy as np
@@ -188,6 +224,28 @@ def run_detection(conf: float = DEFAULT_CONF) -> dict[str, Any]:
     except Exception as e:
         traceback.print_exc()
         return {"error": f"{type(e).__name__}: {e}", "detections": []}
+
+# ─── Camera Capture ───────────────────────────────────────────────────────────
+def capture_camera() -> str | None:
+    """Capture a frame from the webcam and return as base64 JPEG."""
+    import cv2
+    import base64
+    idx = _get_camera_index()
+    cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        return None
+    try:
+        # Warm-up: discard first few frames
+        for _ in range(3):
+            cap.read()
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            return None
+        # Compress to JPEG
+        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        return base64.b64encode(buffer).decode()
+    finally:
+        cap.release()
 
 # ─── Mouse Control (Bézier) ───────────────────────────────────────────────────
 def _gaussian_jitter(px: int = 2) -> int:
@@ -285,7 +343,14 @@ class OrbitHandler(BaseHTTPRequestHandler):
                 "model_error": _model_error,
                 "classes": list(CLASS_IDS.keys()),
                 "port": PORT,
+                "camera_index": _camera_index,
             })
+        elif self.path == "/camera":
+            img_b64 = capture_camera()
+            if img_b64:
+                self._send_json(200, {"success": True, "image_base64": img_b64})
+            else:
+                self._send_json(500, {"success": False, "error": "No se pudo capturar la cámara."})
         else:
             self._send_json(404, {"error": "Not found"})
 

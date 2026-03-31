@@ -24,6 +24,14 @@ const MIME_TYPES: Record<string, string> = {
 export function startWebServer(port = 3000) {
     const server = createServer(async (req, res) => {
         let urlPath = req.url?.split("?")[0] || "/";
+
+        // Health check endpoint
+        if (urlPath === "/health") {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() }));
+            return;
+        }
+
         if (urlPath === "/" || urlPath === "") urlPath = "/index.html";
 
         const filePath = path.join(WEB_DIR, urlPath);
@@ -59,7 +67,7 @@ export function startWebServer(port = 3000) {
     });
 
     server.listen(port, () => {
-        console.log(`[Web UI] 🌐 Dashboard disponible en http://localhost:${port}`);
+        console.log(`[Web UI] Dashboard disponible en http://localhost:${port}`);
     });
 
     return server;
