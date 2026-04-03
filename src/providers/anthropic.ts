@@ -44,8 +44,9 @@ export class AnthropicProvider implements LLMProvider {
         });
 
         if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Anthropic API error ${res.status}: ${err.slice(0, 200)}`);
+            const status = res.status;
+            // Security: never include raw API response in errors (may contain keys/secrets)
+            throw new Error(`Anthropic API error ${status}`);
         }
 
         const data: any = await res.json();

@@ -509,4 +509,205 @@ export const TOOL_DECLARATIONS = [
             required: ["task_id"]
         }
     },
+
+    // ── Sprint 5: Swarm ───────────────────────────────────────────────────────
+    {
+        name: "run_swarm",
+        description: "Ejecuta múltiples tareas en PARALELO usando un enjambre de subagentes. Ideal para análisis multi-dimensional de un proyecto (seguridad + performance + tests + docs simultáneamente). Cada tarea corre en su propio subagente. Devuelve un resumen consolidado de todos los resultados.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                tasks: {
+                    type: "ARRAY",
+                    description: "Lista de tareas a ejecutar en paralelo. Cada tarea tiene 'id' (identificador único), 'goal' (objetivo), y opcionalmente 'context' (datos extra para el subagente).",
+                    items: {
+                        type: "OBJECT",
+                        properties: {
+                            id:      { type: "STRING", description: "ID único de la tarea en el swarm (ej: 'security', 'tests')" },
+                            goal:    { type: "STRING", description: "Objetivo completo que ejecutará el subagente" },
+                            context: { type: "STRING", description: "Contexto adicional (código, datos, restricciones) — opcional" },
+                            timeoutMs: { type: "INTEGER", description: "Timeout específico para esta tarea en ms — opcional" }
+                        },
+                        required: ["id", "goal"]
+                    }
+                },
+                name:        { type: "STRING",  description: "Nombre del swarm para identificarlo en la UI (ej: 'Auditoría completa')" },
+                concurrency: { type: "INTEGER", description: "Máximo de tareas en paralelo (default: 4)" },
+                timeoutMs:   { type: "INTEGER", description: "Timeout global del swarm en ms (default: 300000 = 5 min)" }
+            },
+            required: ["tasks"]
+        }
+    },
+
+    // ── Visual Memory (Sprint 6) ──────────────────────────────────────────────
+    {
+        name: "capture_screen_memory",
+        description: "Captura la pantalla actual, genera una caption con IA y la indexa en la memoria visual semántica de Orbit. También permite buscar en screenshots pasados o ver el historial. Úsalo para recordar estados anteriores de pantalla o buscar cuándo se vio algo.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action:  {
+                    type: "STRING",
+                    description: "capture (default) | search | recent | stats | prune | index_base64"
+                },
+                query:         { type: "STRING",  description: "Consulta de búsqueda (para action=search)" },
+                topK:          { type: "INTEGER", description: "Número de resultados a devolver (default: 5)" },
+                limit:         { type: "INTEGER", description: "Número de entradas recientes (para action=recent, default: 10)" },
+                prompt:        { type: "STRING",  description: "Prompt personalizado para la caption del screenshot" },
+                sessionId:     { type: "STRING",  description: "ID de sesión para agrupar screenshots" },
+                storeThumbnail:{ type: "BOOLEAN", description: "Si es true, almacena la imagen completa en base64 (por defecto: false)" },
+                base64:        { type: "STRING",  description: "Imagen en base64 PNG/JPEG (para action=index_base64)" },
+            },
+            required: []
+        }
+    },
+
+    // ── Ambient Context (Sprint 9) ──────────────────────────────────────────────
+    {
+        name: "get_ambient_context",
+        description: "Obtiene un snapshot del contexto ambiental actual: qué app tiene el usuario activa, historial de ventanas recientes, último contenido del portapapeles y descargas recientes. Úsalo para entender qué está haciendo el usuario antes de responder o para ofrecer ayuda proactiva.",
+        parameters: {
+            type: "OBJECT",
+            properties: {},
+            required: []
+        }
+    },
+
+    // ── Daily Briefing (Sprint 10) ─────────────────────────────────────────────
+    {
+        name: "calendar_check",
+        description: "Lee los eventos del calendario del usuario (hoy, mañana, semana). Compatible con Google Calendar y Microsoft Outlook. Úsalo cuando el usuario pregunte por su agenda, reuniones, citas o eventos del día.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action: {
+                    type: "STRING",
+                    description: "Período: today | tomorrow | week | next (default: today)"
+                },
+                days: {
+                    type: "INTEGER",
+                    description: "Número de días hacia adelante (solo para action=next, default: 3)"
+                },
+            },
+            required: []
+        }
+    },
+    {
+        name: "email_read",
+        description: "Lee el estado del correo del usuario: emails sin leer, remítente y asunto. Compatible con Gmail y Outlook. Úsalo cuando el usuario quiera saber si tiene correos pendientes.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action: {
+                    type: "STRING",
+                    description: "Acción: unread | summary | recent (default: unread)"
+                },
+                maxCount: {
+                    type: "INTEGER",
+                    description: "Máximo de correos a mostrar (default: 10, max: 30)"
+                },
+            },
+            required: []
+        }
+    },
+    {
+        name: "get_briefing",
+        description: "Genera el briefing diario completo: clima, calendario, correos sin leer y tareas pendientes. Úsalo cuando el usuario pida un resumen del día, 'ponme al día', 'qué hay de nuevo' o 'briefing'.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                type: {
+                    type: "STRING",
+                    description: "Tipo: morning (clima+calendario+correo+todos) | evening (resumen día+mañana) | quick (contexto actual) (default: morning)"
+                },
+            },
+            required: []
+        }
+    },
+
+    // ── Mood / Pattern Context (Sprint 11) ───────────────────────────────────
+    {
+        name: "get_mood_context",
+        description: "Devuelve el estado de trabajo inferido del usuario (focused, researching, browsing, switching, idle, email, entertainment) junto con los patrones de rutina aprendidos y el uso de apps en la sesión actual. Úsalo cuando quieras saber qué está haciendo el usuario, cuánto lleva en esa actividad o cuál es su rutina habitual en este horario.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                view: {
+                    type: "STRING",
+                    description: "summary (default) | patterns (tabla de rutinas por hora) | session (apps usadas en esta sesión)"
+                },
+            },
+            required: []
+        }
+    },
+
+    // ── Codebase Semantic Index (Sprint 13) ──────────────────────────────────
+    {
+        name: "codebase_search",
+        description: "Busca semánticamente en el índice del codebase del proyecto. Retorna fragmentos de código relevantes con su ruta. También puede mostrar el estado del indexer (`action=status`) o los errores de TypeScript actuales (`action=errors`). Úsalo cuando quieras encontrar implementaciones, clases, funciones o patrones en el código fuente.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                query: {
+                    type: "STRING",
+                    description: "Consulta de búsqueda (lenguaje natural, nombre de función, clase, etc.)"
+                },
+                topK: {
+                    type: "INTEGER",
+                    description: "Número máximo de resultados (1-20, default: 6)"
+                },
+                ext: {
+                    type: "STRING",
+                    description: "Filtrar por extensión: .ts | .py | .md | .js"
+                },
+                action: {
+                    type: "STRING",
+                    description: "search (default) | status (estado del indexer) | errors (errores TS actuales)"
+                },
+            },
+            required: []
+        }
+    },
+
+    // ── RPA Recorder (Sprint 7) ───────────────────────────────────────────────
+    {
+        name: "rpa_record",
+        description: "Grabador RPA para automatizar secuencias de acciones en la UI. Permite grabar, reproducir, exportar y gestionar macros. Ideal para automatizar tareas repetitivas que involucran clicks, escritura y atajos de teclado.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                action: {
+                    type: "STRING",
+                    description: "start | step | stop | list | replay | delete | export | install_skill | status | get"
+                },
+                name:         { type: "STRING",  description: "Nombre de la grabación (para action=start)" },
+                session_id:   { type: "STRING",  description: "ID de la sesión activa (para action=step/stop)" },
+                id:           { type: "STRING",  description: "ID de la macro guardada (para replay/delete/export/install_skill/get)" },
+                description:  { type: "STRING",  description: "Descripción de la macro (para action=stop)" },
+                tags: {
+                    type: "ARRAY",
+                    description: "Etiquetas para la macro (para action=start)",
+                    items: { type: "STRING" }
+                },
+                // Step parameters (for action=step)
+                step_action:  { type: "STRING",  description: "Tipo de acción del paso: click | type | hotkey | press | scroll | wait | focus_window | screenshot" },
+                x:            { type: "INTEGER", description: "Coordenada X (para click/move)" },
+                y:            { type: "INTEGER", description: "Coordenada Y (para click/move)" },
+                text:         { type: "STRING",  description: "Texto a escribir (para step_action=type)" },
+                key:          { type: "STRING",  description: "Tecla (para step_action=press)" },
+                keys:         { type: "STRING",  description: "Atajo de teclado (para step_action=hotkey, ej: ctrl+c)" },
+                direction:    { type: "STRING",  description: "Dirección de scroll: up | down | left | right" },
+                amount:       { type: "INTEGER", description: "Cantidad de scroll" },
+                seconds:      { type: "NUMBER",  description: "Segundos a esperar (para step_action=wait)" },
+                app:          { type: "STRING",  description: "Nombre de ventana (para step_action=focus_window)" },
+                comment:      { type: "STRING",  description: "Comentario del paso (generado automáticamente si se omite)" },
+                // Replay options
+                speed:        { type: "NUMBER",  description: "Multiplicador de velocidad para replay (default: 1.0)" },
+                step_delay:   { type: "INTEGER", description: "Pausa entre pasos en ms durante replay (default: 200)" },
+                stop_on_error:{ type: "BOOLEAN", description: "Detener replay al primer error (default: true)" },
+                loops:        { type: "INTEGER", description: "Veces que repetir el replay (default: 1)" },
+            },
+            required: ["action"]
+        }
+    },
 ];

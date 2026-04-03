@@ -1,7 +1,8 @@
 /**
- * Orbit Skills Loader — Phase 5
+ * Orbit Skills Loader — Phase 5 → Sprint 1
  * Scans the skills/ directory and loads every SKILL.md into the registry.
  * Parses YAML frontmatter using the `yaml` package.
+ * Now checks eligibility (requires: bins, env, platform).
  */
 
 import fs          from "fs/promises";
@@ -9,10 +10,11 @@ import path        from "path";
 import { fileURLToPath } from "url";
 import yaml        from "yaml";
 import { skillRegistry } from "./registry.js";
-import type { Skill }    from "./types.js";
+import { checkEligibility } from "./eligibility.js";
+import type { Skill, SkillRequirements, SkillInstallGuide } from "./types.js";
 import { createLogger }  from "../infra/logger.js";
 
-const log = createLogger("SkillLoader");
+const log = createLogger("skills");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Frontmatter parser ────────────────────────────────────────────────────────
@@ -34,6 +36,7 @@ function parseFrontmatter(raw: string): { fm: Record<string, any>; body: string 
 export async function loadAllSkills(skillsDir?: string): Promise<void> {
     const dir = skillsDir ?? path.join(__dirname, "../../skills");
     let loaded = 0;
+    let skipped = 0;
     try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
@@ -44,6 +47,14 @@ export async function loadAllSkills(skillsDir?: string): Promise<void> {
                 const { fm, body } = parseFrontmatter(raw);
                 const orbitMeta = fm?.metadata?.orbit ?? {};
 
+                // Parse requirements
+                const requires: SkillRequirements | undefined = orbitMeta.requires ?? undefined;
+                const install: SkillInstallGuide[] | undefined =
+                    Array.isArray(orbitMeta.install) ? orbitMeta.install : undefined;
+
+                // Check eligibility
+                const { eligible, missing } = checkEligibility(requires);
+
                 const skill: Skill = {
                     metadata: {
                         name:        fm.name        ?? entry.name,
@@ -52,12 +63,23 @@ export async function loadAllSkills(skillsDir?: string): Promise<void> {
                         category:    orbitMeta.category ?? "general",
                         tools:       Array.isArray(orbitMeta.tools) ? orbitMeta.tools : [],
                         path:        skillPath,
+                        requires,
+                        install,
+                        primaryEnv:  orbitMeta.primaryEnv,
                     },
                     content: body.trim(),
+                    eligible,
+                    missingRequirements: missing,
                 };
                 skillRegistry.register(skill);
                 loaded++;
-                log.debug(`Skill cargado: ${skill.metadata.name}`);
+
+                if (eligible) {
+                    log.debug(`${skill.metadata.emoji} ${skill.metadata.name} — cargado`);
+                } else {
+                    skipped++;
+                    log.debug(`${skill.metadata.emoji} ${skill.metadata.name} — no elegible (${missing.join(", ")})`);
+                }
             } catch (e: any) {
                 log.warn(`Skill '${entry.name}' no se pudo cargar: ${e.message}`);
             }
@@ -65,5 +87,5 @@ export async function loadAllSkills(skillsDir?: string): Promise<void> {
     } catch {
         log.warn(`Directorio de skills no encontrado: ${dir} — continuando sin skills`);
     }
-    log.info(`${loaded} skill(s) cargados.`);
+    log.info(`${loaded} skill(s) cargados — ${loaded - skipped} elegibles, ${skipped} sin requisitos.`);
 }

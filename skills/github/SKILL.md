@@ -6,6 +6,13 @@ metadata:
     emoji: 🐙
     category: coding
     tools: [cmd_control, file_controller, code_helper]
+    requires:
+      bins: [gh, git]
+    install:
+      - label: Windows
+        command: 'winget install GitHub.cli'
+      - label: macOS
+        command: 'brew install gh'
 ---
 # GitHub
 

@@ -137,7 +137,7 @@ export class McpClient extends EventEmitter {
             stdio: ["pipe", "pipe", "pipe"],
             env,
             cwd: this.config.cwd,
-            shell: true,
+            shell: false,
         });
 
         this.process.stdout!.on("data", (chunk: Buffer) => {

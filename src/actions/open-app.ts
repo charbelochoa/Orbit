@@ -4,6 +4,18 @@ import { existsSync } from "fs";
 
 const execAsync = promisify(exec);
 
+// ── Security: sanitize strings for use in PowerShell via -EncodedCommand ─────
+function psEncodedCommand(script: string): string {
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    return `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
+}
+
+/** Validate app name: only allows safe characters for Windows app names */
+function isSafeAppName(name: string): boolean {
+    // Allow letters, digits, spaces, hyphens, dots, underscores, parentheses, accented chars
+    return /^[\w\s.\-()\u00C0-\u024F]+$/u.test(name) && name.length <= 120;
+}
+
 const APP_ALIASES: Record<string, string> = {
     "chrome":       "Google Chrome",
     "google chrome": "Google Chrome",
@@ -92,6 +104,7 @@ const START_SHORTCUTS: Record<string, string> = {
  * This triggers the native app behavior (e.g. Chrome profile picker).
  */
 async function launchViaShortcut(name: string): Promise<boolean> {
+    // Security: use -EncodedCommand to prevent PS injection
     const psCmd = `
 $name = '${name.replace(/'/g, "''")}'
 $lnk = Get-ChildItem "$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:APPDATA\\Microsoft\\Windows\\Start Menu" -Recurse -Filter '*.lnk' -ErrorAction SilentlyContinue |
@@ -99,9 +112,8 @@ $lnk = Get-ChildItem "$env:ProgramData\\Microsoft\\Windows\\Start Menu","$env:AP
 if ($lnk) { Invoke-Item $lnk.FullName; Write-Output "OK" }
 else { Write-Output "NOT_FOUND" }`;
     try {
-        const encoded = Buffer.from(psCmd, "utf16le").toString("base64");
         const { stdout } = await execAsync(
-            `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`,
+            psEncodedCommand(psCmd),
             { timeout: 10000 }
         );
         return stdout.trim() === "OK";
@@ -113,6 +125,7 @@ else { Write-Output "NOT_FOUND" }`;
 export async function openApp(parameters: any): Promise<string> {
     const rawName = (parameters?.app_name || parameters?.app || "").trim();
     if (!rawName) return "Necesito el nombre de la aplicacion a abrir.";
+    if (!isSafeAppName(rawName)) return `Nombre de aplicación no permitido: "${rawName.slice(0, 40)}".`;
     console.log(`[Open App] Abriendo: ${rawName}`);
     try {
         // Resolve alias
@@ -140,10 +153,10 @@ export async function openApp(parameters: any): Promise<string> {
             await execAsync(`start ${shortcut}`, { timeout: 8000 });
             return `${rawName} abierto.`;
         }
-        // Try Start-Process with resolved name (PowerShell)
+        // Try Start-Process with resolved name (PowerShell) — use -EncodedCommand
         try {
             await execAsync(
-                `powershell -NoProfile -NonInteractive -Command "Start-Process '${resolved.replace(/'/g, "''")}'"`,
+                psEncodedCommand(`Start-Process '${resolved.replace(/'/g, "''")}'`),
                 { timeout: 8000 }
             );
             return `${rawName} abierto.`;

@@ -5,8 +5,9 @@ import { broadcast } from "../gateway/server.js";
 import { generateText } from "../providers/registry.js";
 import { createLogger } from "../infra/logger.js";
 import { runInLane } from "./lanes.js";
+import { getContextEngine } from "../context/registry.js";
 
-const log = createLogger("AgentExecutor");
+const log = createLogger("executor");
 
 // Session ID used for lane tracking (one per executor instance)
 const EXECUTOR_SESSION = `exec_${Date.now()}`;
@@ -117,6 +118,17 @@ export class AgentExecutor {
         const summary = await this.summarize(goal, results);
         broadcast({ type: "task_complete", success: successCount === steps.length, summary });
         if (speakFallback) speakFallback(summary);
+
+        // Persist turn in context engine
+        try {
+            const ctx = await getContextEngine(this.sessionId);
+            await ctx.afterTurn({
+                userMessage: goal,
+                assistantMessage: summary,
+                toolCalls: results.map(r => r.tool),
+            });
+        } catch { /* context engine errors don't break execution */ }
+
         return summary;
     }
 

@@ -3,6 +3,26 @@ import path from "path";
 import os from "os";
 import { normalizePath } from "../core/path-utils.js";
 
+// ── Security: allowed base directories ────────────────────────────
+const ALLOWED_ROOTS = new Set([
+    path.resolve(process.cwd()),
+    path.resolve(os.homedir(), "Desktop"),
+    path.resolve(os.homedir(), "Downloads"),
+    path.resolve(os.homedir(), "Documents"),
+    path.resolve(os.tmpdir()),
+]);
+
+/**
+ * Validate that a resolved path is within an allowed root.
+ * Returns null if safe, or the error message if blocked.
+ */
+function validatePath(resolved: string): string | null {
+    for (const root of ALLOWED_ROOTS) {
+        if (resolved === root || resolved.startsWith(root + path.sep)) return null;
+    }
+    return `Acceso bloqueado: la ruta '${resolved}' está fuera de los directorios permitidos.`;
+}
+
 export async function fileController(parameters: any): Promise<string> {
     const action = parameters?.action?.toLowerCase().trim() || "";
     if (!action) return "Please specify an action (list, read, write, create_file, delete, move, copy, find).";
@@ -15,6 +35,10 @@ if (targetPath.toLowerCase() === "desktop") targetPath = path.join(os.homedir(),
     else if (targetPath.toLowerCase() === "documents") targetPath = path.join(os.homedir(), "Documents");
     else if (targetPath.toLowerCase() === "home" || !targetPath) targetPath = os.homedir();
     //  Resolve absolute path targetPath = normalizePath(targetPath);
+
+    // Security: path traversal guard
+    const pathErr = validatePath(targetPath);
+    if (pathErr) return pathErr;
 switch (action) { case "list": { const files = await fs.readdir(targetPath, { withFileTypes: true });
     const list = files.map(f => `${f.isDirectory() ? '[DIR]' : '[FILE]'} ${f.name}`).join("\n");
     return `Contenido de ${targetPath}:\n${list || "(Carpeta vacía)"}`; } case "read": { const content = await fs.readFile(targetPath, "utf-8");

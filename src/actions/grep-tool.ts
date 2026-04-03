@@ -2,7 +2,7 @@
  * grep_tool — Local content search.
  * Uses ripgrep (rg) if available, fallback to pure JS.
  */
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
@@ -38,6 +38,12 @@ export async function grepTool(parameters: any): Promise<string> {
     const dir = path.resolve(p.dir || process.cwd());
     if (!fs.existsSync(dir)) return `Directorio no encontrado: ${dir}`;
 
+    // Security: restrict search to the project root
+    const projectRoot = path.resolve(process.cwd());
+    if (!dir.startsWith(projectRoot + path.sep) && dir !== projectRoot) {
+        return `Búsqueda bloqueada: '${dir}' está fuera del directorio del proyecto.`;
+    }
+
     const maxResults = Math.min(p.max_results || DEFAULT_MAX, 500);
 
     // Try ripgrep first
@@ -60,13 +66,13 @@ function tryRipgrep(
     }
 
     try {
-        const args = ["rg", "--line-number", "--no-heading", "--color=never"];
-        if (ignoreCase !== false) args.push("-i");
-        if (max) args.push(`--max-count=${max}`);
-        if (glob) args.push(`--glob=${glob}`);
-        args.push("--", pattern, dir);
+        const rgArgs = ["--line-number", "--no-heading", "--color=never"];
+        if (ignoreCase !== false) rgArgs.push("-i");
+        if (max) rgArgs.push(`--max-count=${max}`);
+        if (glob) rgArgs.push(`--glob=${glob}`);
+        rgArgs.push("--", pattern, dir);
 
-        const out = execSync(args.join(" "), {
+        const out = execFileSync("rg", rgArgs, {
             timeout: 15000,
             maxBuffer: 1024 * 1024,
             encoding: "utf-8",

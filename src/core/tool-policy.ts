@@ -176,6 +176,20 @@ class ToolPolicyEngine {
         }
     }
 
+    /** Remove all local rules for a toolId (clear) */
+    removeLocalRule(toolId: string): void {
+        const dir      = path.join(process.cwd(), ".orbit");
+        const filePath = path.join(dir, "settings.local.json");
+        if (!fs.existsSync(filePath)) return;
+        let settings: SettingsFile = {};
+        try { settings = JSON.parse(fs.readFileSync(filePath, "utf-8")); } catch { return; }
+        settings.allow = (settings.allow || []).filter(id => id !== toolId);
+        settings.deny  = (settings.deny  || []).filter(id => id !== toolId);
+        settings.ask   = (settings.ask   || []).filter(id => id !== toolId);
+        fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
+        this.loadConfigLayers();
+    }
+
     /** Save a rule to a local settings file */
     saveLocalRule(toolId: string, action: PolicyAction): void {
         const dir = path.join(process.cwd(), ".orbit");

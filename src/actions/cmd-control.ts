@@ -34,6 +34,15 @@ const BLOCKED_PATTERNS: RegExp[] = [
 ];
 
 // ── Read-only commands (auto-collapsible in UI) ──────────────
+/** Redact likely credentials from a command string before logging */
+function redactCmd(cmd: string): string {
+    return cmd
+        .replace(/password[=:]\s*\S+/gi, "password=***")
+        .replace(/(-p|--password)\s+\S+/gi, "$1 ***")
+        .replace(/:([^/@:]{2,})@/g, ":***@")
+        .replace(/(token|secret|key|api_key)[=:]\s*\S+/gi, "$1=***");
+}
+
 const READ_ONLY_PATTERNS = [
     /^git\s+(status|log|diff|show|branch|remote)/i,
     /^(ls|dir|cat|type|Get-Content|Get-ChildItem)\b/i,
@@ -87,7 +96,7 @@ export async function cmdControl(parameters: any): Promise<string> {
         console.warn("[CMD Control] Comando puede requerir permisos de administrador.");
     }
 
-    console.log(`[CMD Control] Ejecutando:`, cmdToRun, `(timeout: ${timeoutMs}ms, bg: ${!!p?.run_in_background})`);
+    console.log(`[CMD Control] Ejecutando:`, redactCmd(cmdToRun), `(timeout: ${timeoutMs}ms, bg: ${!!p?.run_in_background})`);
 
     // ── Background mode ──────────────────────────────────────
     if (p?.run_in_background) {

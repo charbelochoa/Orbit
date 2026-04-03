@@ -8,8 +8,11 @@ import { pluginRegistry } from "./registry.js";
 import { toolRegistry }   from "../core/registry.js";
 import type { OrbitToolPlugin } from "./types.js";
 import type { OrbitTool } from "../core/registry.js";
+import { createLogger } from "../infra/logger.js";
 
 // ── Base class for action-backed tool plugins ────────────────────────────────
+
+const log = createLogger("plugins");
 
 abstract class ActionPlugin implements OrbitToolPlugin {
     abstract id:          string;

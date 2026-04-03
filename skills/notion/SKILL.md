@@ -6,6 +6,9 @@ metadata:
     emoji: 📓
     category: comms
     tools: [cmd_control, code_helper, web_search]
+    requires:
+      env: [NOTION_TOKEN]
+    primaryEnv: NOTION_TOKEN
 ---
 # Notion
 

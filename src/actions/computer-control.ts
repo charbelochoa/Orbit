@@ -3,6 +3,18 @@ import path from 'path';
 import os from 'os';
 import { runPS, getCursorPos, buildBezierScript } from './ps-bridge.js';
 
+/**
+ * Escape a string for safe use inside a PowerShell single-quoted literal.
+ * Handles: single quotes, dollar signs, backticks, semicolons, and subexpression operators.
+ * Uses -EncodedCommand via Base64 when the string contains dangerous patterns.
+ */
+function psEscapeAsVariable(value: string): string {
+    // Convert to Base64 encoded byte array and use [Text.Encoding] to decode.
+    // This guarantees no PS interpretation of any char.
+    const b64 = Buffer.from(value, "utf16le").toString("base64");
+    return `([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}')))`;
+}
+
 export async function computerControl(parameters: any): Promise<string> {
     const action = (parameters?.action ?? '').toLowerCase().trim();
     if (!action) return 'Especifica una accion: type, click, double_click, right_click, move, hotkey, press, scroll, screenshot, wait, focus_window.';
@@ -14,11 +26,14 @@ export async function computerControl(parameters: any): Promise<string> {
                 const text: string = parameters.text || '';
                 if (!text) return 'Necesito el texto a escribir.';
                 if (text.length > 5) {
-                    const escaped = text.replace(/'/g, "''");
-                    await runPS(`Set-Clipboard -Value '${escaped}'; [System.Windows.Forms.SendKeys]::SendWait('^v'); Start-Sleep -Milliseconds 50`);
+                    // Safe: use Base64-encoded variable to avoid PowerShell injection
+                    const safeText = psEscapeAsVariable(text);
+                    await runPS(`Set-Clipboard -Value ${safeText}; [System.Windows.Forms.SendKeys]::SendWait('^v'); Start-Sleep -Milliseconds 50`);
                 } else {
                     const escaped = text.replace(/[+^%~(){}[\]]/g, (c: string) => `{${c}}`).replace(/\n/g, '{ENTER}').replace(/\t/g, '{TAB}');
-                    await runPS(`[System.Windows.Forms.SendKeys]::SendWait('${escaped.replace(/'/g, "''")}');`);
+                    // SendKeys format doesn't interpret PS variables, but still escape quotes
+                    const sendKeySafe = escaped.replace(/'/g, "''");
+                    await runPS(`[System.Windows.Forms.SendKeys]::SendWait('${sendKeySafe}');`);
                 }
                 return `Texto escrito: ${text.slice(0, 40)}${text.length > 40 ? '...' : ''}`;
             }
@@ -97,7 +112,9 @@ export async function computerControl(parameters: any): Promise<string> {
             case 'focus_window': {
                 const appName: string = parameters.app || parameters.description || '';
                 if (!appName) return 'Necesito el nombre de la ventana.';
-                await runPS(`$wshell = New-Object -ComObject WScript.Shell; $wshell.AppActivate('${appName.replace(/'/g, "''")}');`);
+                // Safe: Base64-encoded to prevent PowerShell injection
+                const safeName = psEscapeAsVariable(appName);
+                await runPS(`$wshell = New-Object -ComObject WScript.Shell; $wshell.AppActivate(${safeName});`);
                 return `Ventana activada: ${appName}`;
             }
             case 'screen_find':

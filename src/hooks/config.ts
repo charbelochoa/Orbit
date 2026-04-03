@@ -80,6 +80,9 @@ const VALID_EVENTS: Set<string> = new Set([
     "PreToolUse", "PostToolUse",
     "SessionStart", "SessionEnd",
     "UserMessage", "AssistantMessage",
+    "TurnBefore", "TurnAfter",
+    "CompactStart", "CompactDone",
+    "MemoryUpdated",
     "OrbitStop", "Notification",
 ]);
 

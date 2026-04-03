@@ -26,6 +26,12 @@ export async function globTool(parameters: any): Promise<string> {
     const baseDir = path.resolve(p.dir || process.cwd());
     if (!fs.existsSync(baseDir)) return `Directorio no encontrado: ${baseDir}`;
 
+    // Security: restrict traversal to the project root
+    const projectRoot = path.resolve(process.cwd());
+    if (!baseDir.startsWith(projectRoot + path.sep) && baseDir !== projectRoot) {
+        return `Búsqueda bloqueada: '${baseDir}' está fuera del directorio del proyecto.`;
+    }
+
     const matches: string[] = [];
     const regex = globToRegex(p.pattern);
 

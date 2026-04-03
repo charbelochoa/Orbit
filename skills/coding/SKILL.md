@@ -6,6 +6,8 @@ metadata:
     emoji: 💻
     category: coding
     tools: [code_helper, cmd_control, file_controller]
+    requires:
+      anyBins: [node, python, python3]
 ---
 # Coding
 

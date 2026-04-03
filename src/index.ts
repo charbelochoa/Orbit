@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 
 import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync, startMemoryAutoSave } from "./memory/memory-manager.js";
 import { addMessage } from "./memory/chat-history.js";
-import { startGateway, broadcast, setTypingState, updateTokenUsage, resetTokenUsage } from "./gateway/server.js";
+import { startGateway, broadcast, setTypingState, updateTokenUsage, resetTokenUsage, getSessionToken, onElectronConnected } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
 import { getQueue, TaskPriority } from "./agent/task-queue.js";
 import { TOOL_DECLARATIONS } from "./core/tool-registry.js";
@@ -23,6 +23,14 @@ import { providerRegistry } from "./providers/registry.js";
 import { loadAllPlugins }   from "./plugins/loader.js";
 import { loadAllSkills }    from "./skills/loader.js";
 import { initAutoReply }    from "./auto-reply/index.js";
+import { proactiveService } from "./proactive/service.js";
+import { pruneOldEntries }  from "./memory/visual-memory.js";
+import { ambientService }   from "./ambient/service.js";
+import { ruleEngine }       from "./proactive/rule-engine.js";
+import { notificationService, setElectronConnected } from "./notifications/service.js";
+import { wakeWordMonitor }  from "./notifications/wake-word.js";
+import { codebaseIndexer }  from "./codebase/indexer.js";
+import { errorWatcher }     from "./codebase/error-watcher.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = createLogger("Orbit");
@@ -100,19 +108,51 @@ function startPythonEngine() {
     }
 }
 
-// Speak (send text to Gemini Live)
-function speak(text: string) {
-    if (!geminiSession || !isGeminiReady) {
-        log.warn("No puedo hablar: sesion Gemini no lista.");
-        return;
+// Speak (send text to Gemini Live, fallback to text provider)
+async function speak(text: string) {
+    // If Gemini Live session is ready, use it (audio mode)
+    if (geminiSession && isGeminiReady) {
+        try {
+            geminiSession.sendClientContent({
+                turns: [{ role: "user", parts: [{ text }] }],
+                turnComplete: true
+            });
+            return;
+        } catch (e: any) {
+            log.warn("Error al enviar por Gemini Live:", e.message);
+            // Fall through to text fallback
+        }
     }
+
+    // Text fallback using provider registry
+    log.info("Gemini Live no disponible — usando fallback de texto");
+    setTypingState("thinking");
     try {
-        geminiSession.sendClientContent({
-            turns: [{ role: "user", parts: [{ text }] }],
-            turnComplete: true
+        const mem = await loadMemory();
+        const memStr = formatMemoryForPrompt(mem);
+        const now = new Date().toLocaleString("es-MX", {
+            weekday: "long", year: "numeric", month: "long",
+            day: "numeric", hour: "2-digit", minute: "2-digit"
         });
+        const systemPrompt = getSystemPrompt(memStr, now);
+        const result = await providerRegistry.generateText({
+            systemPrompt,
+            messages: [{ role: "user", content: text }],
+        });
+        const reply = result.text || "No pude generar una respuesta.";
+        addMessage(SESSION_ID, "user", text);
+        addMessage(SESSION_ID, "assistant", reply);
+        broadcast({ type: "orbit_message", text: reply });
+        broadcast({ type: "turn_complete" });
+        if (result.usage) {
+            updateTokenUsage(result.usage.inputTokens ?? 0, result.usage.outputTokens ?? 0);
+        }
     } catch (e: any) {
-        log.warn("Error al enviar mensaje:", e.message);
+        log.error("Fallback de texto falló:", e.message);
+        broadcast({ type: "orbit_message", text: "⚠️ No pude conectar con ningún proveedor de IA. Verifica tu API key en .env" });
+        broadcast({ type: "turn_complete" });
+    } finally {
+        setTypingState("idle");
     }
 }
 
@@ -158,6 +198,8 @@ async function connectGemini() {
                             addMessage(SESSION_ID, "user", _lastUserText);
                             broadcast({ type: "user_message", text: _lastUserText });
                             setTypingState("thinking");
+                            // Sprint 12: Wake word detection
+                            wakeWordMonitor.check(_lastUserText);
                         }
                         if (sc.modelTurn?.parts) {
                             for (const part of sc.modelTurn.parts) {
@@ -271,22 +313,73 @@ async function main() {
     // Register built-in /commands (Phase 6)
     initAutoReply();
 
+    // Sprint 5: Proactive triggers (file watchers + cron schedules)
+    await proactiveService.start();
+
+    // Sprint 9: Ambient Awareness Engine
+    await ambientService.start();
+
+    // Sprint 11: Rule Engine (context-aware proactive triggers)
+    const patternsCfg = config.patterns;
+    if (patternsCfg?.enabled !== false) {
+        ruleEngine.start(
+            (patternsCfg?.ruleIntervalSec ?? 60) * 1000,
+            patternsCfg?.disabledRules ?? [],
+        );
+    }
+
+    // Sprint 12: Notifications + Wake Word
+    if (config.notifications?.enabled !== false) {
+        notificationService.start();
+    }
+    if (config.wakeWord?.enabled) {
+        wakeWordMonitor.start();
+    }
+
+    // Sprint 13: Codebase Semantic Index + Error Watcher
+    if (config.codebase?.enabled) {
+        await codebaseIndexer.start();
+    }
+    if (config.codebase?.errorWatcher?.enabled) {
+        errorWatcher.start();
+    }
+
+    // Sprint 6: Visual memory — prune old entries on startup
+    pruneOldEntries();
+
     // Phase 10: Memory auto-save every 5 minutes
     startMemoryAutoSave();
 
     startWebServer(config.server.webPort);
     startGateway(speak);
+    console.log(`[Gateway] Session token: ${getSessionToken()}`);
+    // Sprint 12: when Electron connects, enable native toasts
+    onElectronConnected((connected) => setElectronConnected(connected));
     startPythonEngine();
     await connectGemini();
 
     process.on("SIGINT", () => {
         log.info("Cerrando Orbit...");
+        proactiveService.stop();
+        ruleEngine.stop();
+        notificationService.stop();
+        wakeWordMonitor.stop();
+        errorWatcher.stop();
+        void codebaseIndexer.stop();
+        ambientService.stop();
         killPS();
         if (pythonEngine) pythonEngine.kill();
         process.exit(0);
     });
 
     process.on("SIGTERM", () => {
+        proactiveService.stop();
+        ruleEngine.stop();
+        notificationService.stop();
+        wakeWordMonitor.stop();
+        errorWatcher.stop();
+        void codebaseIndexer.stop();
+        ambientService.stop();
         killPS();
         if (pythonEngine) pythonEngine.kill();
         process.exit(0);

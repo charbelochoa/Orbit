@@ -2,7 +2,10 @@ import { generateText }  from "../providers/registry.js";
 import { createLogger }  from "../infra/logger.js";
 import { skillRegistry } from "../skills/registry.js";
 
-const log = createLogger("Planner");
+const log = createLogger("planner");
+
+/** Sanitize strings for log output — prevent log injection via newlines/CR */
+const sanitizeForLog = (s: string) => s.replace(/[\r\n]+/g, " ").slice(0, 300);
 
 const PLANNER_PROMPT = `
 You are the planning module of ORBIT.
@@ -26,7 +29,7 @@ OUTPUT — return ONLY valid JSON, no markdown, no explanation:
 }`;
 
 export async function createPlan(goal: string, context: string = ""): Promise<any> {
-    log.info(`Planificando meta: ${goal}`);
+    log.info(`Planificando meta: ${sanitizeForLog(goal)}`);
     try {
         let userPrompt = `Goal: ${goal}`;
         if (context) userPrompt += `\nContext: ${context}`;
@@ -58,7 +61,7 @@ export async function createPlan(goal: string, context: string = ""): Promise<an
     }
 } /** * Re-plan remaining steps when the current approach fails. * Uses the error context to generate a different strategy. */
 export async function replan(goal: string, failedSteps: string, errorMsg: string): Promise<any> {
-    log.info(`Replanificando: ${goal}`);
+    log.info(`Replanificando: ${sanitizeForLog(goal)}`);
     try {
         const replanPrompt = `Goal: ${goal}\nThe previous steps FAILED: ${failedSteps}\nError encountered: ${errorMsg}\n\nGenerate a NEW plan using a DIFFERENT approach. Avoid the same tools/strategy that failed.`;
 

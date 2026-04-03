@@ -1,13 +1,36 @@
 import fs from "fs/promises";
+import fsSync from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { createLogger } from "../infra/logger.js";
+import { VectorMemoryStore, type MemorySearchResult } from "./vector-store.js";
+import { expandQuery } from "./query-expansion.js";
 
 dotenv.config();
 
+const log = createLogger("memory");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MEMORY_PATH = path.join(__dirname, "../../data/memory/long_term.json");
+const MEMORY_MD_PATH = path.join(__dirname, "../../data/MEMORY.md");
+
+// ── Vector store singleton ──────────────────────────────────────────────────
+let _vectorStore: VectorMemoryStore | null = null;
+
+function getVectorStore(): VectorMemoryStore {
+    if (!_vectorStore) {
+        _vectorStore = new VectorMemoryStore();
+    }
+    return _vectorStore;
+}
+
+export function closeVectorStore(): void {
+    if (_vectorStore) {
+        _vectorStore.close();
+        _vectorStore = null;
+    }
+}
 
 // Intervalo de turnos antes de actualizar memoria (reduce llamadas API)
 let _turnCounter = 0;
@@ -123,6 +146,91 @@ export async function maybeUpdateMemoryAsync(userText: string, assistantText: st
         const data = JSON.parse(raw);
         if (Object.keys(data).length) await updateMemory(data);
     } catch (e: any) {
-        if (!e.message?.includes("429")) console.warn("[Memory] ", e.message);
+        if (!e.message?.includes("429")) log.warn(e.message);
     }
+}
+
+// ── Semantic Memory Search ──────────────────────────────────────────────────
+
+/**
+ * Search all indexed memory (MEMORY.md, long_term.json, past conversations)
+ * using vector similarity or FTS5.
+ */
+export async function searchMemory(query: string, topK = 5): Promise<MemorySearchResult[]> {
+    const store = getVectorStore();
+    return store.search(query, topK);
+}
+
+/**
+ * Index known memory files into the vector store.
+ * Call this on startup and after memory changes.
+ */
+export async function indexMemoryFiles(): Promise<void> {
+    const store = getVectorStore();
+    const paths: string[] = [];
+
+    // 1. MEMORY.md
+    if (fsSync.existsSync(MEMORY_MD_PATH)) {
+        paths.push(MEMORY_MD_PATH);
+    }
+
+    // 2. All .md files in data/memory/
+    const memDir = path.dirname(MEMORY_PATH);
+    if (fsSync.existsSync(memDir)) {
+        const entries = fsSync.readdirSync(memDir);
+        for (const entry of entries) {
+            if (entry.endsWith(".md") || entry.endsWith(".txt")) {
+                paths.push(path.join(memDir, entry));
+            }
+        }
+    }
+
+    // 3. Index long_term.json as text
+    if (fsSync.existsSync(MEMORY_PATH)) {
+        const raw = fsSync.readFileSync(MEMORY_PATH, "utf-8");
+        const data = JSON.parse(raw);
+        const text = flattenMemoryToText(data);
+        if (text.length > 20) {
+            await store.indexText("long_term_json", text);
+        }
+    }
+
+    if (paths.length > 0) {
+        await store.sync(paths);
+    }
+
+    const s = store.stats();
+    log.info(`Memory indexed: ${s.files} files, ${s.chunks} chunks, ${s.embeddings} embeddings`);
+}
+
+/**
+ * Index a chat turn into memory for future recall.
+ */
+export async function indexChatTurn(
+    sessionId: string,
+    userText: string,
+    assistantText: string,
+): Promise<void> {
+    if (userText.length < 15) return; // skip trivial messages
+    const store = getVectorStore();
+    const content = `User: ${userText.slice(0, 1000)}\nAssistant: ${assistantText.slice(0, 1000)}`;
+    await store.indexText(`chat:${sessionId}:${Date.now()}`, content);
+}
+
+/** Flatten long_term.json into a readable text for indexing. */
+function flattenMemoryToText(mem: MemoryStore): string {
+    const lines: string[] = [];
+    for (const [section, data] of Object.entries(mem)) {
+        if (!data || typeof data !== "object") continue;
+        for (const [k, v] of Object.entries(data)) {
+            const val = (v as any)?.value;
+            if (val) lines.push(`${section}.${k}: ${val}`);
+        }
+    }
+    return lines.join("\n");
+}
+
+/** Get memory stats from the vector store. */
+export function memoryStats() {
+    return getVectorStore().stats();
 }

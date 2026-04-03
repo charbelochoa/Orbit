@@ -8,12 +8,28 @@ import path from "path";
 import dotenv from "dotenv";
 import { parse as parseYaml } from "yaml";
 import { orbitConfigSchema, type OrbitConfig } from "./schema.js";
-import { createLogger } from "../infra/logger.js";
+import { createLogger, setSubsystemLevels } from "../infra/logger.js";
 
 dotenv.config();
 
-const log = createLogger("Config");
+const log = createLogger("config");
 let _config: OrbitConfig | null = null;
+
+// ── Config refresh handlers ──────────────────────────────────────────────────
+
+type ConfigRefreshHandler = (config: OrbitConfig) => void;
+const _refreshHandlers: ConfigRefreshHandler[] = [];
+
+/** Register a callback that fires whenever config is reloaded */
+export function onConfigRefresh(handler: ConfigRefreshHandler): void {
+    _refreshHandlers.push(handler);
+}
+
+function _notifyRefresh(config: OrbitConfig): void {
+    for (const h of _refreshHandlers) {
+        try { h(config); } catch { /* handler errors don't break config load */ }
+    }
+}
 
 /** Recursively replace ${VAR} placeholders with process.env values */
 function resolveEnvVars(obj: any): any {
@@ -72,6 +88,12 @@ export function loadConfig(configPath?: string): OrbitConfig {
     mergeEnvVars(raw);
 
     _config = orbitConfigSchema.parse(raw);
+
+    // Apply per-subsystem log levels from config
+    if (_config.logging.subsystems && Object.keys(_config.logging.subsystems).length > 0) {
+        setSubsystemLevels(_config.logging.subsystems);
+    }
+
     return _config;
 }
 
@@ -81,8 +103,10 @@ export function getConfig(): OrbitConfig {
     return _config;
 }
 
-/** Force reload config from disk (useful for hot-reload) */
+/** Force reload config from disk and notify all refresh handlers */
 export function reloadConfig(configPath?: string): OrbitConfig {
     _config = null;
-    return loadConfig(configPath);
+    const cfg = loadConfig(configPath);
+    _notifyRefresh(cfg);
+    return cfg;
 }

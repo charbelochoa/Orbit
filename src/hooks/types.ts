@@ -12,6 +12,11 @@ export type HookEvent =
     | "SessionEnd"
     | "UserMessage"
     | "AssistantMessage"
+    | "TurnBefore"
+    | "TurnAfter"
+    | "CompactStart"
+    | "CompactDone"
+    | "MemoryUpdated"
     | "OrbitStop"
     | "Notification";
 

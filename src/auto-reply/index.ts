@@ -26,7 +26,15 @@ import { rewindCommand }   from "./commands/rewind.js";
 import { todosCommand }    from "./commands/todos.js";
 import { mcpCommand }      from "./commands/mcp.js";
 import { insightsCommand } from "./commands/insights.js";
-import { resetTokenUsage } from "../gateway/server.js";
+import { rpaCommand }         from "./commands/rpa.js";
+import { permissionsCommand } from "./commands/permissions.js";
+import { planCommand }        from "./commands/plan.js";
+import { ambientCommand }     from "./commands/ambient.js";
+import { briefingCommand }    from "./commands/briefing.js";
+import { moodCommand }        from "./commands/mood.js";
+import { notifyCommand }      from "./commands/notify.js";
+import { codebaseCommand }    from "./commands/codebase.js";
+import { resetTokenUsage }    from "../gateway/server.js";
 import type { CommandContext } from "./types.js";
 
 export function initAutoReply(): void {
@@ -157,6 +165,70 @@ export function initAutoReply(): void {
         description: "Análisis de tus sesiones: tareas, herramientas, archivos",
         usage:       "/insights",
         handler:     insightsCommand,
+    });
+
+    commandRegistry.register({
+        name:        "rpa",
+        aliases:     ["macro", "record"],
+        description: "Grabador RPA: graba, reproduce y exporta macros de UI",
+        usage:       "/rpa start|stop|list|replay|delete|export|install|status|show",
+        handler:     rpaCommand,
+    });
+
+    commandRegistry.register({
+        name:        "permissions",
+        aliases:     ["perms", "perm"],
+        description: "Gestión de permisos por herramienta",
+        usage:       "/permissions show|allow|deny|ask|clear|pending|cancel [tool]",
+        handler:     permissionsCommand,
+    });
+
+    commandRegistry.register({
+        name:        "plan",
+        aliases:     ["planmode"],
+        description: "Plan Mode: registra herramientas sin ejecutarlas para revisión",
+        usage:       "/plan [on|off|show|execute|clear|status]",
+        handler:     planCommand,
+    });
+
+    commandRegistry.register({
+        name:        "ambient",
+        aliases:     ["awareness", "amb"],
+        description: "Motor de percepción ambiental: ventana activa, portapapeles, descargas",
+        usage:       "/ambient [status|on|off|window|clipboard|downloads]",
+        handler:     ambientCommand,
+    });
+
+    commandRegistry.register({
+        name:        "briefing",
+        aliases:     ["brief", "ponmealdía", "ponmealdia"],
+        description: "Daily briefing: clima, calendario, correo y tareas pendientes",
+        usage:       "/briefing [morning|evening|quick|calendar|email|week]",
+        handler:     briefingCommand,
+    });
+
+    commandRegistry.register({
+        name:        "mood",
+        aliases:     ["estado", "focus"],
+        description: "Estado de trabajo inferido: foco, investigación, cambios de contexto y patrones aprendidos",
+        usage:       "/mood [status|patterns|session|rules]",
+        handler:     moodCommand,
+    });
+
+    commandRegistry.register({
+        name:        "notify",
+        aliases:     ["toast", "notificacion"],
+        description: "Sistema de notificaciones nativas del SO y wake word monitor",
+        usage:       "/notify [test|on|off|status|wakeword]",
+        handler:     notifyCommand,
+    });
+
+    commandRegistry.register({
+        name:        "codebase",
+        aliases:     ["code", "index"],
+        description: "Índice semántico del codebase: busca código, estado del indexer y errores TS",
+        usage:       "/codebase [status|search <query>|errors|index]",
+        handler:     codebaseCommand,
     });
 
     // Built-in /help command (no separate handler file needed)

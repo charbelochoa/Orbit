@@ -25,7 +25,10 @@
   "dependencies": {
     "@google/genai": "latest",
     "better-sqlite3": "^11.5.0",
+    "chokidar": "^5.0.0",
     "dotenv": "^16.4.5",
+    "micromatch": "^4.0.8",
+    "node-cron": "^4.2.1",
     "node-notifier": "^10.0.1",
     "puppeteer-core": "^23.6.1",
     "screenshot-desktop": "^1.15.0",
@@ -39,8 +42,8 @@
     "@types/node-notifier": "^8.0.5",
     "@types/ws": "^8.5.12",
     "concurrently": "^9.1.0",
-    "electron": "^33.4.0",
-    "electron-builder": "^25.1.8",
+    "electron": "^41.1.1",
+    "electron-builder": "^26.8.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "wait-on": "^8.0.1"

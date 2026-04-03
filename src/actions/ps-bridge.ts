@@ -158,12 +158,36 @@ function _ensureProcess(): Promise<void> {
 
 // Public API
 
+// ── Security: PowerShell script allowlist patterns ──────────────────────────
+// Only scripts matching at least one pattern are allowed through runPS.
+const PS_ALLOWED_PATTERNS: RegExp[] = [
+    /^\[OrbitInput\]::/, // C# interop calls (Move, LClick, RClick, Scroll, GetPos, etc.)
+    /^\[System\.Windows\.Forms\.SendKeys\]::SendWait\(/,  // Keystrokes
+    /^Set-Clipboard\s/,             // Clipboard operations
+    /^\$s\s*=\s*\[System\.Windows\.Forms\.Screen\]/, // Screen size query
+    /^\$wshell\s*=\s*New-Object\s+-ComObject\s+WScript\.Shell/, // Window focus
+    /^\(\[Text\.Encoding\]::Unicode/, // Base64-safe variable decode
+];
+
+function isAllowedScript(script: string): boolean {
+    // A compound script may chain multiple allowed statements with '; '
+    const statements = script.split(/;\s*/).map(s => s.trim()).filter(Boolean);
+    return statements.every(stmt =>
+        PS_ALLOWED_PATTERNS.some(p => p.test(stmt))
+    );
+}
+
 /**
  * Execute a PowerShell script in the persistent process.
  * The C# OrbitInput class is already compiled — just call its methods.
  * Typical latency: ~5-15ms (vs ~500-1000ms when spawning new PS each time).
+ *
+ * Security: only scripts matching the allowlist patterns are executed.
  */
 export async function runPS(script: string, timeout = 30000): Promise<string> {
+    if (!isAllowedScript(script)) {
+        throw new Error(`PS script bloqueado por seguridad: ${script.slice(0, 80)}...`);
+    }
     await _ensureProcess();
     return new Promise<string>((resolve, reject) => {
         const timer = setTimeout(() => {

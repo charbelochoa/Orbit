@@ -80,6 +80,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sb-footer-btn{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--radius);cursor:pointer;font-size:12px;color:var(--text-2);background:none;border:none;width:100%;text-align:left;transition:background .12s,color .12s}
 .sb-footer-btn:hover{background:var(--surface2);color:var(--text)}
 .sb-footer-btn.active{background:var(--surface);color:var(--accent)}
+/* SIDEBAR — hidden: full-screen chat mode */
+#sidebar{display:none !important}
+#topbar-toggle{display:none}
 /* MAIN */
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 /* TOPBAR */
@@ -502,6 +505,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
 <script>
 'use strict';
+/* SESSION TOKEN (injected by web-server) */
+window.__ORBIT_TOKEN = '__ORBIT_SESSION_TOKEN__';
 /* PIXEL ART */
 var PAL={'_':'','0':'#1a1030','1':'#2d1f5e','2':'#4a3d8f','3':'#7c6af7','4':'#9b8cf8','5':'#c4b9fb','6':'#ffffff','7':'#1a1a2e'};
 var HEAD=['____00000000____','___0344444430___','__034444444430__','_03444455444430_','_04446764467440_','_04446764467440_','_0344444444430__','_03444444444430_','__034444444430__'];
@@ -570,7 +575,7 @@ function showThinking(visible,label){if(visible){if(thinkingEl)return;thinkingEl
 /* WS */
 var ws=null,reconnT=null,reconnCount=0;
 var IS_ELECTRON=!!(window.orbitElectron&&window.orbitElectron.isElectron);
-function connect(){clearTimeout(reconnT);try{ws=new WebSocket('ws://localhost:18789');}catch(e){schedRecon();return;}ws.onopen=function(){reconnCount=0;setConn('online');setBadge('ws-badge','ok');sendWs({type:'status'});g('send-btn').disabled=!g('msg-input').value.trim();};ws.onclose=function(){setConn('offline');schedRecon();setBadge('ws-badge','err');};ws.onerror=function(){};ws.onmessage=function(e){try{handle(JSON.parse(e.data));}catch(_){};};}
+function connect(){clearTimeout(reconnT);try{ws=new WebSocket('ws://localhost:18789?token='+encodeURIComponent(window.__ORBIT_TOKEN||''));}catch(e){schedRecon();return;}ws.onopen=function(){reconnCount=0;setConn('online');setBadge('ws-badge','ok');sendWs({type:'status'});g('send-btn').disabled=!g('msg-input').value.trim();};ws.onclose=function(){setConn('offline');schedRecon();setBadge('ws-badge','err');};ws.onerror=function(){};ws.onmessage=function(e){try{handle(JSON.parse(e.data));}catch(_){};};}
 function schedRecon(){reconnCount++;var delay=Math.min(30000,1500*Math.pow(2,reconnCount-1));reconnT=setTimeout(connect,delay);}
 function sendWs(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}
 function setConn(s){var dot=g('tb-dot');dot.className='';if(s==='online'){dot.classList.add('online');setStatus('');}else if(s==='offline'){dot.classList.add('offline');setStatus('Desconectado. Reconectando...','warn');}else{setStatus('Conectando...');}}

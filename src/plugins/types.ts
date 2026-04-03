@@ -1,10 +1,12 @@
 /**
  * Orbit Plugin SDK Types
- * Phase 3.1 — Interfaces every plugin must implement.
+ * Phase 3.1 + Sprint 4 — Plugin interfaces with typed slot registrations.
  * Inspired by OpenClaw's plugin-sdk with Orbit-specific simplifications.
  */
 
 import type { OrbitTool } from "../core/registry.js";
+import type { HookEvent, HookRule } from "../hooks/types.js";
+import type { CommandDef } from "../auto-reply/types.js";
 
 // ── Base Plugin ──────────────────────────────────────────────────────────────
 
@@ -58,6 +60,58 @@ export interface OrbitChannelPlugin extends OrbitPlugin {
     onMessage(handler: MessageHandler): void;
     sendMessage(msg: OutboundMessage): Promise<void>;
     getStatus(): "connected" | "disconnected" | "error";
+}
+
+// ── Slot Registrations ───────────────────────────────────────────────────────
+
+/** A tool registered by a plugin into the global registry. */
+export interface PluginToolRegistration {
+    pluginId: string;
+    tool:     OrbitTool;
+}
+
+/** A hook registered by a plugin. */
+export interface PluginHookRegistration {
+    pluginId: string;
+    event:    HookEvent;
+    rule:     HookRule;
+}
+
+/** A slash command registered by a plugin. */
+export interface PluginCommandRegistration {
+    pluginId: string;
+    command:  CommandDef;
+}
+
+/** A provider registered by a plugin (e.g., LLM, embedding, TTS). */
+export interface PluginProviderRegistration {
+    pluginId: string;
+    kind:     "llm" | "embedding" | "tts" | "stt";
+    name:     string;
+    factory:  () => unknown;
+}
+
+/** A channel registered by a plugin. */
+export interface PluginChannelRegistration {
+    pluginId: string;
+    channel:  OrbitChannelPlugin;
+}
+
+/** A background service registered by a plugin. */
+export interface PluginServiceRegistration {
+    pluginId: string;
+    name:     string;
+    start:    () => Promise<void>;
+    stop:     () => Promise<void>;
+}
+
+// ── Plugin Record (stored in registry) ──────────────────────────────────────
+
+export interface PluginRecord {
+    plugin:      OrbitPlugin;
+    loadedAt:    Date;
+    healthy:     boolean;
+    diagnostics: string[];
 }
 
 // ── Guard helpers ─────────────────────────────────────────────────────────────

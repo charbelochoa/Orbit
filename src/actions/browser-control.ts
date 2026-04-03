@@ -1,6 +1,18 @@
 import puppeteer, { Browser, Page } from "puppeteer-core";
 import os from "os";
 
+// ── Security: URL validation ──────────────────────────────────────────────────
+const BLOCKED_PROTOCOLS = new Set(["file:", "javascript:", "data:", "vbscript:"]);
+
+function isUrlSafe(urlStr: string): boolean {
+    try {
+        const u = new URL(urlStr);
+        return !BLOCKED_PROTOCOLS.has(u.protocol);
+    } catch {
+        return false;
+    }
+}
+
 // Mantenemos la instancia del navegador abierta durante la sesión
 let browser: Browser | null = null;
 let currentPage: Page | null = null;
@@ -43,6 +55,7 @@ export async function browserControl(parameters: any): Promise<string> {
     //  Timeout safe context currentPage.setDefaultTimeout(10000);
 switch (action) { case "go_to": { let url = parameters.url;
     if (!url.startsWith("http")) url = `https://${url}`;
+    if (!isUrlSafe(url)) return `URL bloqueada por seguridad: ${url}`;
     await currentPage.goto(url, { waitUntil: 'domcontentloaded' });
     return `Página cargada: ${await currentPage.title()}`; } case "search": { const query = parameters.query;
     await currentPage.goto(`https://www.google.com/search?q=${encodeURIComponent(query)}`);

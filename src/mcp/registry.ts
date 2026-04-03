@@ -57,6 +57,37 @@ class McpRegistry {
         log.info(`MCP config loaded: ${this.configs.size} server(s)`);
     }
 
+    // Whitelist of commandos permitidos para MCP stdio servers
+    private static ALLOWED_COMMANDS = new Set([
+        "node", "node.exe", "npx", "npx.cmd",
+        "python", "python.exe", "python3", "python3.exe",
+        "pip", "pip.exe", "pip3", "pip3.exe",
+        "uvx", "uv",
+        "deno", "deno.exe",
+        "bun", "bun.exe",
+        "docker", "docker.exe",
+    ]);
+
+    private validateServerConfig(name: string, cfg: McpServerConfig): string | null {
+        if (cfg.url) return null; // SSE transport — no command to validate
+        if (!cfg.command) return `Servidor '${name}': falta 'command'.`;
+
+        // Extract the base command name (strip path)
+        const baseName = cfg.command.split(/[\\/]/).pop()?.toLowerCase() || "";
+        if (!McpRegistry.ALLOWED_COMMANDS.has(baseName)) {
+            return `Servidor MCP '${name}': comando '${cfg.command}' no está en la lista de comandos permitidos. ` +
+                   `Permitidos: ${[...McpRegistry.ALLOWED_COMMANDS].join(", ")}`;
+        }
+
+        // Block shell metacharacters in args
+        for (const arg of cfg.args || []) {
+            if (/[;&|`$()]/.test(arg)) {
+                return `Servidor MCP '${name}': argumento '${arg}' contiene caracteres de shell no permitidos.`;
+            }
+        }
+        return null;
+    }
+
     private loadConfigFile(filePath: string): void {
         if (!fs.existsSync(filePath)) return;
         try {
@@ -64,6 +95,11 @@ class McpRegistry {
             const config: McpConfigFile = JSON.parse(raw);
             if (config.servers) {
                 for (const [name, cfg] of Object.entries(config.servers)) {
+                    const error = this.validateServerConfig(name, cfg);
+                    if (error) {
+                        log.warn(`⚠️ ${error} — servidor ignorado.`);
+                        continue;
+                    }
                     this.configs.set(name, cfg);
                 }
             }

@@ -6,6 +6,8 @@ metadata:
     emoji: 🪟
     category: windows
     tools: [open_app, computer_settings, computer_control, cmd_control, drag]
+    requires:
+      platform: [win32]
 ---
 # Windows Control
 

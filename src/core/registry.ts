@@ -83,6 +83,15 @@ const TOOL_METADATA: Record<string, ToolMeta> = {
     task_list:          { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
     task_stop:          { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
     task_output:        { section: "agent",   profiles: ["standard","coding","full"],           capabilities: {} },
+
+    // Sprint 5: Swarm
+    run_swarm:          { section: "agent",   profiles: ["standard","coding","full"],           capabilities: { async: true } },
+
+    // Sprint 6: Visual Memory
+    capture_screen_memory: { section: "vision", profiles: ["standard","full"], capabilities: { requiresUI: true } },
+
+    // Sprint 7: RPA Recorder
+    rpa_record: { section: "system", profiles: ["standard","full"], capabilities: { requiresUI: true } },
 };
 
 // ── Registry Class ───────────────────────────────────────────────────────────

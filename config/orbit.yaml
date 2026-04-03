@@ -65,3 +65,143 @@ engine:
 # Logging level: debug | info | warn | error
 logging:
   level: "info"
+  # Per-subsystem overrides (optional):
+  # subsystems:
+  #   skills: "debug"
+  #   context: "warn"
+  #   plugins: "info"
+  #   memory: "debug"
+
+# Visual Memory — Sprint 6
+# Enable to have Orbit remember what was on screen (indexed + searchable).
+memory:
+  visual:
+    enabled: false           # Set to true to activate
+    captureOnTurn: false     # Capture screenshot after every agent turn
+    captionModel: "gemini-2.5-flash"
+    retentionDays: 7         # Delete entries older than N days
+
+# Proactive Triggers — Sprint 5
+# Set enabled: true to activate file watchers and cron schedules.
+proactive:
+  enabled: false
+
+  # File-watch triggers — fire an agent goal when files change
+  watchers: []
+  # Example:
+  # - id: ts-compile-check
+  #   glob: "src/**/*.ts"
+  #   on: [change]
+  #   goal: "Revisa si el archivo {{file}} tiene errores de TypeScript"
+  #   debounce: 2000
+  #   ignore: ["**/*.d.ts", "**/node_modules/**"]
+  #   enabled: true
+
+  # Cron-scheduled triggers — fire an agent goal on a schedule
+  schedules: []
+  # Example:
+  # - id: daily-standup
+  #   cron: "0 9 * * 1-5"   # 09:00 Mon-Fri
+  #   goal: "Resume los commits de ayer y prepara el standup de hoy"
+  #   timezone: "Europe/Madrid"
+  #   enabled: true
+
+# Ambient Awareness Engine — Sprint 9
+# Detecta ventana activa, portapapeles y descargas en tiempo real.
+# Cambia enabled: true para activar al inicio. Tambien puedes usar /ambient on.
+ambient:
+  enabled: false
+
+  # Monitor de ventana activa (Windows only)
+  window:
+    enabled: true
+    pollIntervalMs: 5000   # Intervalo de deteccion en ms
+    historySize: 10        # Cuantos cambios de ventana recordar
+
+  # Monitor de portapapeles (Windows only)
+  clipboard:
+    enabled: true
+    pollIntervalMs: 2000   # Intervalo de lectura en ms
+    minLength: 3           # Ignorar clips menores a N chars
+    maxLength: 5000        # Truncar clips mayores a N chars
+    notifyOnUrl: true      # Emitir evento ambient_clipboard al copiar URLs
+    notifyOnCode: false    # Emitir evento al copiar codigo
+    notifyOnError: true    # Emitir evento al copiar stack traces / errores
+
+  # Watcher de carpeta Downloads
+  downloads:
+    enabled: true
+    notifyOnNew: true      # Emitir evento ambient_download al detectar nuevo archivo
+    watchExtensions:       # Extensiones a vigilar (vacio = todas)
+      - pdf
+      - zip
+      - exe
+      - docx
+      - xlsx
+      - pptx
+      - mp4
+      - mp3
+      - png
+      - jpg
+      - jpeg
+
+# Daily Briefing — Sprint 10
+# Ciudad para el reporte del clima en /briefing. Vacio = auto-detect por IP.
+briefing:
+  city: ""       # Ej: "Ciudad de Mexico", "Buenos Aires", "Madrid"
+
+  # Para activar briefing automatico, descomentar en proactive.schedules:
+  # - id: morning-briefing
+  #   cron: "0 9 * * 1-5"    # lun-vie a las 9:00
+  #   goal: "Presenta el briefing matutino: clima, calendario de hoy, correos sin leer y tareas pendientes"
+  #   enabled: true
+  # - id: evening-digest
+  #   cron: "0 19 * * 1-5"   # lun-vie a las 19:00
+  #   goal: "Presenta el digest del dia: resumen de actividad, tareas pendientes y agenda de manana"
+  #   enabled: true
+
+# Pattern Learning & Rule Engine — Sprint 11
+# Aprende rutinas de uso y dispara sugerencias proactivas segun contexto.
+patterns:
+  enabled: true                 # Registra uso de apps y aprende rutinas horarias
+  ruleIntervalSec: 60           # Cada cuantos segundos se evaluan las reglas (minimo 30)
+  disabledRules: []             # IDs de reglas a silenciar, ej: ["idle_break", "research_mode"]
+  # Reglas incorporadas disponibles:
+  #   idle_break           — misma app > 90 min → recordatorio de pausa
+  #   error_clipboard      — portapapeles contiene stack trace → ofrecer ayuda
+  #   research_mode        — navegador en Stack Overflow / GitHub → ofrecer contexto
+  #   download_arrived     — nueva descarga en ~/Downloads → informar
+  #   context_switch_warning — mas de 10 cambios de ventana en 10 min
+
+# Toast Notifications — Sprint 12
+# Notificaciones nativas del sistema operativo cuando ocurren eventos relevantes.
+notifications:
+  enabled: true                 # Activar notificaciones toast del SO
+  notifyOnStartup: true         # Notificar al arrancar Orbit
+  silenced: []                  # Silenciar eventos: ["startup", "idle_break", "tasks", "rules"]
+
+# Wake Word — Sprint 12
+# Detecta una frase en tu voz para activar el overlay sin usar el teclado.
+wakeWord:
+  enabled: false                # Cambiar a true para activar la deteccion
+  phrases:                      # Frases que activan el overlay (case-insensitive)
+    - "orbit"
+    - "orbita"
+  cooldownSec: 5                # Segundos minimos entre activaciones
+
+# Codebase Semantic Index + Error Watcher — Sprint 13
+# Indexa el codigo fuente del proyecto para busquedas semanticas.
+# Tambien puede vigilar errores de TypeScript en tiempo real.
+codebase:
+  enabled: false                # Cambiar a true para activar el indexer
+  root: ""                      # Ruta raiz del proyecto (vacio = cwd)
+  extensions:                   # Extensiones a indexar
+    - ".ts"
+    - ".tsx"
+    - ".js"
+    - ".py"
+    - ".md"
+  excludePatterns: []           # Globs adicionales a excluir del indice
+  errorWatcher:
+    enabled: false              # Cambiar a true para activar el watcher de tsc
+    minIntervalSec: 30          # Intervalo minimo entre ejecuciones de tsc

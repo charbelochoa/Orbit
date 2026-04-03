@@ -20,6 +20,7 @@ let isQuitting = false;
 let backendReady = false;
 let gatewayWs = null;
 let contextPanelVisible = false;
+let sessionToken = "";
 
 function log(msg)  { console.log(`[Electron] ${msg}`); }
 function warn(msg) { console.warn(`[Electron] ${msg}`); }
@@ -84,6 +85,9 @@ async function startBackend() {
   backend.stdout.on("data", (data) => {
     const line = data.toString().trim();
     if (line) process.stdout.write(`[Backend] ${line}\n`);
+    // Capture session token from gateway output
+    const tokenMatch = line.match(/\[Gateway\] Session token: ([a-f0-9]+)/);
+    if (tokenMatch) sessionToken = tokenMatch[1];
     if (line.includes("Orbit esta en linea") || line.includes("Sesion lista")) {
       backendReady = true;
     }
@@ -231,9 +235,15 @@ function connectGatewayBridge() {
   try { WS = require("ws"); } catch (_) { return; }
   function tryConnect() {
     if (isQuitting) return;
-    try { gatewayWs = new WS.WebSocket("ws://localhost:18789"); }
+    const wsUrl = sessionToken ? `ws://localhost:18789?token=${sessionToken}` : "ws://localhost:18789";
+    try { gatewayWs = new WS.WebSocket(wsUrl); }
     catch (_) { setTimeout(tryConnect, 5000); return; }
-    gatewayWs.on("open", () => { log("Gateway bridge conectado"); sendToOverlay("orb_connected", true); });
+    gatewayWs.on("open", () => {
+      log("Gateway bridge conectado");
+      sendToOverlay("orb_connected", true);
+      // Notificar al backend que Electron está conectado (habilita toasts nativos)
+      gatewayWs.send(JSON.stringify({ type: "electron_connected", value: true }));
+    });
     gatewayWs.on("message", (raw) => {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
@@ -258,6 +268,40 @@ function connectGatewayBridge() {
           }
           break;
         case "user_message": sendToOverlay("orb_state", { state: "thinking" }); break;
+
+        // ── Sprint 12: Toast Notifications ────────────────────────────────
+        case "notify_toast": {
+          const { Notification } = require("electron");
+          if (Notification.isSupported()) {
+            const n = new Notification({
+              title:  msg.title  || "Orbit",
+              body:   msg.body   || "",
+              silent: msg.silent || false,
+              // urgency reuse tag for grouping (Linux/Win10+)
+              ...(msg.sourceId ? { tag: msg.sourceId } : {}),
+            });
+            n.show();
+          } else {
+            // Fallback: tray balloon (Windows 7 / unsupported)
+            tray?.displayBalloon?.({ title: msg.title || "Orbit", content: msg.body || "", iconType: "info" });
+          }
+          break;
+        }
+
+        // ── Sprint 12: Wake Word detected ─────────────────────────────────
+        case "wake_word_detected": {
+          log(`Wake word: "${msg.phrase}"`);
+          // Mostrar overlay y enfocar la ventana principal
+          if (overlayWindow && !overlayWindow.isDestroyed()) {
+            overlayWindow.setIgnoreMouseEvents(false);
+          }
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (!mainWindow.isVisible()) mainWindow.show();
+            mainWindow.focus();
+          }
+          sendToOverlay("orb_state", { state: "thinking" });
+          break;
+        }
       }
     });
     gatewayWs.on("close", () => {
@@ -358,7 +402,22 @@ function detectContext() {
 }
 
 function registerGlobalHotkeys() {
-  // Alt+Space → toggle Orbit context panel
+  // Ctrl+Shift+O → toggle ventana principal de Orbit
+  const registeredMain = globalShortcut.register("Ctrl+Shift+O", () => {
+    log("Ctrl+Shift+O presionado — toggle ventana principal");
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isVisible() && mainWindow.isFocused()) {
+        mainWindow.hide();
+      } else {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }
+  });
+  if (registeredMain) log("Hotkey Ctrl+Shift+O registrado (toggle ventana)");
+  else warn("No se pudo registrar Ctrl+Shift+O");
+
+  // Alt+Space → toggle panel de contexto del overlay
   const registered = globalShortcut.register("Alt+Space", () => {
     log("Alt+Space presionado");
     contextPanelVisible = !contextPanelVisible;
