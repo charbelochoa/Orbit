@@ -33,6 +33,10 @@ import { emailRead }              from "./email.js";
 import { assembleBriefing }       from "../briefing/assembler.js";
 import { getMoodContext }          from "./mood-context.js";
 import { codebaseSearch }          from "./codebase.js";
+import { OrbitToolError }          from "../core/orbit-error.js";
+import { VisualAgentLoop }         from "../agent/visual-loop.js";
+import { loopRegistry }            from "../agent/loop-registry.js";
+import { readOffice, writeOffice } from "./office-files.js";
 
 const log = createLogger("ToolRouter");
 
@@ -186,6 +190,24 @@ case "get_ambient_context": result = await getAmbientContext(args); break;
 case "get_mood_context": result = await getMoodContext(args); break;
     //  ── Codebase Semantic Index (Sprint 13) ─────────────────────────────────────────
 case "codebase_search": result = await codebaseSearch(args); break;
+    //  ── Visual Agent Loop (Phase 2) ──────────────────────────────────────────────────
+case "visual_task": {
+        const goal = args?.goal || args?.task || args?.description || "";
+        if (!goal) { result = "Necesito un 'goal' que describa la tarea visual a realizar."; break; }
+        const loopId = `vl_${Date.now()}`;
+        const loop = new VisualAgentLoop();
+        loopRegistry.register(loopId, loop);
+        try {
+            const loopResult = await loop.run(goal, { maxLoops: args?.maxLoops });
+            result = `[${loopResult.status}] (${loopResult.totalLoops} pasos, ${Math.round(loopResult.elapsedMs / 1000)}s) ${loopResult.summary}`;
+        } finally {
+            loopRegistry.unregister(loopId);
+        }
+        break;
+    }
+    //  ── Fase 5: Office Files (OfficeCLI) ─────────────────────────────────
+case "read_office":  result = await readOffice(args);  break;
+    case "write_office": result = await writeOffice(args); break;
     default: log.warn(`Tool desconocida: '${name}'`);
     result = `Tool '${name}' no esta implementada.`;
     // Phase 6: PostToolUse hooks (unknown tool)
@@ -196,7 +218,15 @@ case "codebase_search": result = await codebaseSearch(args); break;
     // Phase 6: PostToolUse hooks (success)
     await runPostToolHooks(name, args || {}, result!, true).catch(() => {});
     return result!;
-    } catch (error: any) { log.error(`Error en '${name}':`, error);
+    } catch (error: any) {
+    // Phase 1: Structured errors for LLM self-correction
+    if (error instanceof OrbitToolError) {
+        log.error(`OrbitToolError en '${name}': [${error.code}] ${error.message}`);
+        result = error.toAgentString();
+        await runPostToolHooks(name, args || {}, result, false).catch(() => {});
+        return result;
+    }
+    log.error(`Error en '${name}':`, error);
     result = `Error ejecutando '${name}': ${error.message}`;
     // Phase 6: PostToolUse hooks (failure)
     await runPostToolHooks(name, args || {}, result, false).catch(() => {});

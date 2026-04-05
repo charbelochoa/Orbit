@@ -211,7 +211,11 @@ async function createWindow() {
     ...(fs.existsSync(ICON_PATH) ? { icon: ICON_PATH } : {}),
   });
   await mainWindow.loadURL("http://localhost:3000");
-  mainWindow.once("ready-to-show", () => log("Ventana lista"));
+  mainWindow.once("ready-to-show", () => {
+    log("Ventana lista");
+    mainWindow.show();
+    mainWindow.focus();
+  });
   mainWindow.on("close", (e) => {
     if (!isQuitting) {
       e.preventDefault();
@@ -302,6 +306,39 @@ function connectGatewayBridge() {
           sendToOverlay("orb_state", { state: "thinking" });
           break;
         }
+
+        // ── Phase 3: Visual Agent Loop overlays ───────────────────────────
+        case "visual_loop_status": {
+          const s = msg.status;
+          if (s === "running" || s === "paused") {
+            const label = s === "paused" ? "Pausado..." : (msg.goal ? msg.goal.slice(0, 50) : "Procesando...");
+            showAgentBusy(label);
+          } else {
+            // finished / stopped / error / call_user / max_loops
+            hideAgentBusy();
+          }
+          break;
+        }
+        case "visual_loop_step": {
+          // Update widget with current loop counter and last action
+          const actionLabel = `${msg.action}${msg.thought ? " · " + msg.thought.slice(0, 40) : ""}`;
+          showAgentWidget(actionLabel, msg.loop, msg.maxLoops);
+          // Show click mark for click-type actions
+          const clickActions = ["click", "left_click", "double_click", "right_click"];
+          if (msg.x != null && msg.y != null && clickActions.includes(msg.action)) {
+            showClickMark(msg.x, msg.y);
+          }
+          break;
+        }
+        // Also show click mark for regular task execution clicks (visual_loop step)
+        case "task_plan": {
+          sendToOverlay("orb_state", { state: "thinking" });
+          break;
+        }
+        case "task_complete": {
+          hideAgentBusy();
+          break;
+        }
       }
     });
     gatewayWs.on("close", () => {
@@ -315,8 +352,146 @@ function connectGatewayBridge() {
   setTimeout(tryConnect, 3000);
 }
 
+// ── Phase 3: SetOfMarks, ScreenMarker, Agent Widget ─────────────────────────
+
+const CLICK_MARK_HTML  = path.join(ROOT, "src", "ui", "overlay", "click-mark.html");
+const WATER_FLOW_HTML  = path.join(ROOT, "src", "ui", "overlay", "water-flow.html");
+const AGENT_WIDGET_HTML = path.join(ROOT, "src", "ui", "overlay", "agent-widget.html");
+
+let clickMarkWindow  = null;   // ephemeral per-click marker
+let waterFlowWindow  = null;   // fullscreen animated border
+let agentWidgetWindow = null;  // floating status widget (hidden from screenshots)
+
+/**
+ * SetOfMarks — Show a brief animated click indicator at screen coordinates.
+ * Auto-destroys after 800ms.
+ */
+function showClickMark(x, y) {
+  if (!fs.existsSync(CLICK_MARK_HTML)) return;
+  // Destroy previous if still showing
+  if (clickMarkWindow && !clickMarkWindow.isDestroyed()) {
+    try { clickMarkWindow.destroy(); } catch (_) {}
+  }
+  const SIZE = 60;
+  clickMarkWindow = new BrowserWindow({
+    x: Math.round(x - SIZE / 2),
+    y: Math.round(y - SIZE / 2),
+    width: SIZE, height: SIZE,
+    frame: false, transparent: true, alwaysOnTop: true,
+    skipTaskbar: true, resizable: false, movable: false,
+    focusable: false, hasShadow: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  clickMarkWindow.setIgnoreMouseEvents(true);
+  clickMarkWindow.setAlwaysOnTop(true, "screen-saver");
+  clickMarkWindow.setMenu(null);
+  clickMarkWindow.loadFile(CLICK_MARK_HTML);
+  // Auto-destroy after animation completes
+  setTimeout(() => {
+    if (clickMarkWindow && !clickMarkWindow.isDestroyed()) {
+      try { clickMarkWindow.destroy(); } catch (_) {}
+      clickMarkWindow = null;
+    }
+  }, 800);
+}
+
+/**
+ * ScreenMarker water-flow — fullscreen transparent border animation shown
+ * while the visual agent loop is running.
+ */
+function showWaterFlow() {
+  if (!fs.existsSync(WATER_FLOW_HTML)) return;
+  if (waterFlowWindow && !waterFlowWindow.isDestroyed()) return; // already visible
+  const { bounds } = screen.getPrimaryDisplay();
+  waterFlowWindow = new BrowserWindow({
+    x: bounds.x, y: bounds.y,
+    width: bounds.width, height: bounds.height,
+    frame: false, transparent: true, alwaysOnTop: true,
+    skipTaskbar: true, resizable: false, movable: false,
+    focusable: false, hasShadow: false,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  waterFlowWindow.setIgnoreMouseEvents(true);
+  waterFlowWindow.setAlwaysOnTop(true, "screen-saver");
+  waterFlowWindow.setMenu(null);
+  waterFlowWindow.loadFile(WATER_FLOW_HTML);
+  waterFlowWindow.on("closed", () => { waterFlowWindow = null; });
+}
+
+function hideWaterFlow() {
+  if (waterFlowWindow && !waterFlowWindow.isDestroyed()) {
+    try { waterFlowWindow.destroy(); } catch (_) {}
+    waterFlowWindow = null;
+  }
+}
+
+/**
+ * Agent widget — small floating status display in the bottom-right corner.
+ * setContentProtection(true) makes it INVISIBLE in the agent's own screenshots,
+ * preventing interference with the VLM's visual reasoning.
+ */
+function showAgentWidget(statusText, loop, maxLoop) {
+  const W = 380, H = 72;
+  const display = screen.getPrimaryDisplay();
+  const wx = display.workArea.x + display.workArea.width  - W - 16;
+  const wy = display.workArea.y + display.workArea.height - H - 16;
+
+  if (agentWidgetWindow && !agentWidgetWindow.isDestroyed()) {
+    // Update existing widget via JS injection
+    const safe = (statusText || "").replace(/"/g, '\\"').replace(/\n/g, ' ');
+    agentWidgetWindow.webContents.executeJavaScript(
+      `window.updateWidget("${safe}", ${loop || 0}, ${maxLoop || 25})`
+    ).catch(() => {});
+    return;
+  }
+
+  if (!fs.existsSync(AGENT_WIDGET_HTML)) return;
+
+  agentWidgetWindow = new BrowserWindow({
+    x: wx, y: wy, width: W, height: H,
+    frame: false, transparent: true, alwaysOnTop: true,
+    skipTaskbar: true, resizable: false, movable: false,
+    focusable: false, hasShadow: true,
+    webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  agentWidgetWindow.setIgnoreMouseEvents(true);
+  agentWidgetWindow.setAlwaysOnTop(true, "screen-saver");
+  agentWidgetWindow.setMenu(null);
+  // KEY: makes this window invisible in screenshots captured on this display
+  try { agentWidgetWindow.setContentProtection(true); } catch (_) {}
+  agentWidgetWindow.loadFile(AGENT_WIDGET_HTML);
+  agentWidgetWindow.once("ready-to-show", () => {
+    agentWidgetWindow.showInactive();
+    // Initial update
+    const safe = (statusText || "Iniciando...").replace(/"/g, '\\"').replace(/\n/g, ' ');
+    agentWidgetWindow.webContents.executeJavaScript(
+      `window.updateWidget("${safe}", ${loop || 0}, ${maxLoop || 25})`
+    ).catch(() => {});
+  });
+  agentWidgetWindow.on("closed", () => { agentWidgetWindow = null; });
+}
+
+function hideAgentWidget() {
+  if (agentWidgetWindow && !agentWidgetWindow.isDestroyed()) {
+    try { agentWidgetWindow.destroy(); } catch (_) {}
+    agentWidgetWindow = null;
+  }
+}
+
+/** Show all agent-busy visuals at once. */
+function showAgentBusy(statusText, loop, maxLoop) {
+  showWaterFlow();
+  showAgentWidget(statusText, loop, maxLoop);
+}
+
+/** Hide all agent-busy visuals. */
+function hideAgentBusy() {
+  hideWaterFlow();
+  hideAgentWidget();
+}
+
 app.whenReady().then(async () => {
-  log(`Orbit AI iniciando... (empaquetado: ${IS_PACKED})`);
+
   startBackend();
   log("Esperando backend en puerto 3000...");
   try {
@@ -325,6 +500,14 @@ app.whenReady().then(async () => {
   } catch (e) {
     err(`Backend no respondio: ${e.message}`);
     err("Verifica que GEMINI_API_KEY este configurada en .env");
+  }
+  // Also wait for Gateway WebSocket server (18789) to avoid race conditions
+  log("Esperando gateway en puerto 18789...");
+  try {
+    await waitForPort(18789, 30, 500);
+    log("Gateway listo en puerto 18789");
+  } catch (e) {
+    warn(`Gateway no respondio a tiempo: ${e.message}. Continuando...`);
   }
   createTray();
   createOverlay();

@@ -212,6 +212,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .task-time{font-size:10px;color:var(--text-muted)}
 .task-cancel-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--error);font-size:10px;padding:2px 8px;cursor:pointer;transition:background .12s}
 .task-cancel-btn:hover{background:rgba(239,68,68,.1)}
+.task-pause-btn,.task-resume-btn{background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);font-size:11px;padding:2px 7px;cursor:pointer;transition:background .12s;margin-right:3px}
+.task-pause-btn:hover{background:rgba(99,102,241,.12)}
+.task-resume-btn{color:#a5b4fc;border-color:rgba(99,102,241,.35)}
+.task-resume-btn:hover{background:rgba(99,102,241,.15)}
+.task-status-dot.paused{background:#f59e0b;animation:none}
+@keyframes pulse-dot{0%,100%{opacity:.5}50%{opacity:1}}
 .task-progress-bar{background:var(--surface2);border-radius:3px;height:3px;margin-bottom:8px;overflow:hidden}
 .task-progress-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .4s ease}
 .task-steps{display:flex;flex-direction:column;gap:4px}
@@ -397,6 +403,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <button class="voice-stop" id="voice-stop-btn">Detener</button>
         </div>
         <div id="input-area" style="position:relative">
+          <!-- Phase 4: Visual agent loop control bar -->
+          <div id="visual-bar" style="display:none;align-items:center;gap:8px;padding:6px 12px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.25);border-radius:8px;margin-bottom:6px;">
+            <span style="width:7px;height:7px;border-radius:50%;background:#6366f1;flex-shrink:0;animation:pulse-dot 1.4s ease-in-out infinite"></span>
+            <span id="vbar-label" style="flex:1;font-size:11px;color:rgba(255,255,255,0.7);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Agente visual activo...</span>
+            <button id="vbar-pause" onclick="sendWs({type:'visual_pause'})" title="Pausar agente" style="display:none;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.7);border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;">⏸ Pausar</button>
+            <button id="vbar-resume" onclick="sendWs({type:'visual_resume'})" title="Reanudar agente" style="display:none;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;">▶ Reanudar</button>
+            <button onclick="sendWs({type:'visual_stop'})" title="Detener agente" style="background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;">■ Detener</button>
+          </div>
           <div id="slash-menu"></div>
           <div id="input-wrapper">
             <textarea id="msg-input" placeholder="Mensaje... (/ para comandos)" rows="1" autocomplete="off" spellcheck="false"></textarea>
@@ -514,15 +528,16 @@ function drawHead(cv){var minX=16,maxX=0;HEAD.forEach(function(r){for(var i=0;i<
 drawHead(document.getElementById('sb-logo-canvas'));
 drawHead(document.getElementById('welcome-canvas'));
 
-/* MARKDOWN */
-marked.setOptions({breaks:true,gfm:true});
+/* MARKDOWN — with defensive fallbacks if CDN libs fail to load */
+if(typeof marked!=='undefined'){marked.setOptions({breaks:true,gfm:true});}
 function renderMd(text){
+  if(typeof marked==='undefined') return esc(String(text||''));
   var dirty=marked.parse(String(text||''));
   dirty=dirty.replace(/<pre><code class="language-(\w+)">([\s\S]*?)<\/code><\/pre>/g,function(_,lang,code){var id='cb_'+Math.random().toString(36).slice(2);return '<pre><div class="code-header"><span class="code-lang">'+esc(lang)+'</span><button class="code-copy" onclick="copyCode(\''+id+'\')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button></div><code id="'+id+'" class="language-'+lang+'">'+code+'</code></pre>';});
   dirty=dirty.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g,function(_,code){var id='cb_'+Math.random().toString(36).slice(2);return '<pre><div class="code-header"><span class="code-lang">texto</span><button class="code-copy" onclick="copyCode(\''+id+'\')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button></div><code id="'+id+'">'+code+'</code></pre>';});
-  return DOMPurify.sanitize(dirty,{USE_PROFILES:{html:true}});
+  return typeof DOMPurify!=='undefined'?DOMPurify.sanitize(dirty,{USE_PROFILES:{html:true}}):dirty;
 }
-function applyHL(el){el.querySelectorAll('pre code').forEach(function(b){hljs.highlightElement(b);});}
+function applyHL(el){if(typeof hljs==='undefined')return;el.querySelectorAll('pre code').forEach(function(b){hljs.highlightElement(b);});}
 function copyCode(id){var el=document.getElementById(id);if(!el)return;navigator.clipboard.writeText(el.innerText).catch(function(){});var btn=el.parentElement&&el.parentElement.querySelector('.code-copy');if(btn){btn.textContent='✓ Copiado';setTimeout(function(){btn.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar';},2000);}}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function g(id){return document.getElementById(id);}
@@ -600,7 +615,11 @@ function handle(msg){
     case 'task_step_error':if(msg.taskId)markTaskStep(msg.taskId,msg.step,'error');if(msg.message)addOrbitBubble('⚠️ '+msg.message);break;
     case 'task_complete':if(msg.taskId)upsertTask(msg.taskId,{status:'done',progress:100});showThinking(false);if(msg.summary)addOrbitBubble(msg.summary);break;
     case 'task_cancelled':if(msg.taskId)upsertTask(msg.taskId,{status:'cancelled'});break;
+    case 'task_paused':if(msg.id)upsertTask(msg.id,{status:'paused'});break;
+    case 'task_resumed':if(msg.id)upsertTask(msg.id,{status:'running'});break;
     case 'task_replan':if(msg.taskId)upsertTask(msg.taskId,{status:'running'});break;
+    case 'visual_loop_status':updateVisualBar(msg.status,msg.goal);break;
+    case 'visual_loop_step':updateVisualBar('running',null,msg.loop,msg.maxLoops,msg.action);break;
     case 'memory':if(msg.key)updateMem(msg.key,msg.value,msg.ts);break;
     case 'status':if(msg.gemini)setBadge('gemini-badge',msg.gemini);if(msg.python)setBadge('python-badge',msg.python);if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
     case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.id)syncProviderSel(msg.id);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
@@ -664,8 +683,31 @@ function syncProviderSel(id){var sel=g('provider-select');if(sel)sel.value=id;va
 var tasks={};
 function upsertTask(id,patch){if(!tasks[id])tasks[id]={id:id,title:'Tarea',status:'pending',steps:[],progress:0};Object.assign(tasks[id],patch);renderTaskCard(id);}
 function markTaskStep(id,stepName,state){if(!tasks[id])return;var step=tasks[id].steps.find(function(s){return s.name===stepName||s.tool===stepName;});if(step){step.state=state;renderTaskCard(id);}}
-function renderTaskCard(id){var t=tasks[id],panel=g('view-tasks'),empty=g('tasks-empty'),existing=g('task-card-'+id);if(!existing){existing=document.createElement('div');existing.id='task-card-'+id;existing.className='task-card';if(empty)panel.insertBefore(existing,empty);else panel.appendChild(existing);if(empty)empty.style.display='none';}var sc={running:'running',done:'done',error:'error'}[t.status]||'';var cancelBtn=t.status==='running'?'<button class="task-cancel-btn" onclick="cancelTask(\''+esc(id)+'\')">Cancelar</button>':'';var stepsHtml=(t.steps||[]).map(function(s){var ss=s.state==='done'?'done':s.state==='error'?'error':s.state==='active'?'active':'';return '<div class="task-step '+ss+'"><span class="task-step-dot"></span><span>'+esc(s.name||s.tool||'Paso')+'</span></div>';}).join('');existing.innerHTML='<div class="task-card-header"><span class="task-status-dot '+sc+'"></span><span class="task-title">'+esc(t.title)+'</span><span class="task-time">'+tsShort()+'</span>'+cancelBtn+'</div><div class="task-progress-bar"><div class="task-progress-fill" style="width:'+(t.progress||0)+'%"></div></div>'+(stepsHtml?'<div class="task-steps">'+stepsHtml+'</div>':'');}
+function renderTaskCard(id){var t=tasks[id],panel=g('view-tasks'),empty=g('tasks-empty'),existing=g('task-card-'+id);if(!existing){existing=document.createElement('div');existing.id='task-card-'+id;existing.className='task-card';if(empty)panel.insertBefore(existing,empty);else panel.appendChild(existing);if(empty)empty.style.display='none';}var sc={running:'running',paused:'paused',done:'done',error:'error'}[t.status]||'';var pauseBtn=t.status==='running'?'<button class="task-pause-btn" onclick="pauseTask(\''+esc(id)+'\')" title="Pausar">⏸</button>':'';var resumeBtn=t.status==='paused'?'<button class="task-resume-btn" onclick="resumeTask(\''+esc(id)+'\')" title="Reanudar">▶</button>':'';var cancelBtn=(t.status==='running'||t.status==='paused')?'<button class="task-cancel-btn" onclick="cancelTask(\''+esc(id)+'\')">Cancelar</button>':'';var stepsHtml=(t.steps||[]).map(function(s){var ss=s.state==='done'?'done':s.state==='error'?'error':s.state==='active'?'active':'';return '<div class="task-step '+ss+'"><span class="task-step-dot"></span><span>'+esc(s.name||s.tool||'Paso')+'</span></div>';}).join('');existing.innerHTML='<div class="task-card-header"><span class="task-status-dot '+sc+'"></span><span class="task-title">'+esc(t.title)+'</span><span class="task-time">'+tsShort()+'</span>'+pauseBtn+resumeBtn+cancelBtn+'</div><div class="task-progress-bar"><div class="task-progress-fill" style="width:'+(t.progress||0)+'%"></div></div>'+(stepsHtml?'<div class="task-steps">'+stepsHtml+'</div>':'');}
 function cancelTask(id){sendWs({type:'chat',payload:{text:'/cancel '+id}});}
+function pauseTask(id){sendWs({type:'task_pause',payload:{id:id}});}
+function resumeTask(id){sendWs({type:'task_resume',payload:{id:id}});}
+/* VISUAL LOOP BAR */
+function updateVisualBar(status,goal,loop,maxLoops,action){var bar=g('visual-bar');if(!bar)return;if(status==='running'||status==='paused'){bar.style.display='flex';var label=action?action:(goal?goal.slice(0,60):'Procesando...');var loopTxt=(loop&&maxLoops)?' '+loop+'/'+maxLoops:'';g('vbar-label').textContent=label+loopTxt;g('vbar-pause').style.display=status==='running'?'inline-flex':'none';g('vbar-resume').style.display=status==='paused'?'inline-flex':'none';}else{bar.style.display='none';}}
+function pauseTask(id){sendWs({type:'task_pause',payload:{id:id}});}
+function resumeTask(id){sendWs({type:'task_resume',payload:{id:id}});}
+/* VISUAL LOOP BAR */
+var _vbarVisible=false;
+function updateVisualBar(status,goal,loop,maxLoops,action){
+  var bar=g('visual-bar');if(!bar)return;
+  if(status==='running'||status==='paused'){
+    bar.style.display='flex';
+    var label=action?action:(goal?goal.slice(0,60):'Procesando...');
+    var loopText=(loop&&maxLoops)?(' '+loop+'/'+maxLoops):'';
+    g('vbar-label').textContent=label+loopText;
+    g('vbar-pause').style.display=status==='running'?'inline-flex':'none';
+    g('vbar-resume').style.display=status==='paused'?'inline-flex':'none';
+    _vbarVisible=true;
+  } else {
+    bar.style.display='none';
+    _vbarVisible=false;
+  }
+}
 
 /* MEMORY */
 var memData={};

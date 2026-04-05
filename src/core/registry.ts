@@ -92,6 +92,13 @@ const TOOL_METADATA: Record<string, ToolMeta> = {
 
     // Sprint 7: RPA Recorder
     rpa_record: { section: "system", profiles: ["standard","full"], capabilities: { requiresUI: true } },
+
+    // Phase 2: Visual Agent Loop
+    visual_task: { section: "vision", profiles: ["standard","full"], capabilities: { requiresUI: true, async: true } },
+
+    // Fase 5: Office Files (OfficeCLI)
+    read_office:  { section: "files", profiles: ["standard","coding","full"], capabilities: {} },
+    write_office: { section: "files", profiles: ["standard","coding","full"], capabilities: { destructive: true } },
 };
 
 // ── Registry Class ───────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ class AmbientService {
     async start(): Promise<void> {
         if (this._running) return;
 
-        const cfg = await getConfig();
+        const cfg = getConfig();
         if (!cfg.ambient?.enabled) {
             log.debug("Ambient service deshabilitado en config (ambient.enabled: false)");
             return;

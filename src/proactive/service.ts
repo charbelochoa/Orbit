@@ -28,7 +28,7 @@ class ProactiveService {
     async start(): Promise<void> {
         if (this.running) return;
 
-        const cfg = await getConfig();
+        const cfg = getConfig();
         if (!cfg.proactive?.enabled) {
             log.debug("Proactive service deshabilitado en config (proactive.enabled: false)");
             return;

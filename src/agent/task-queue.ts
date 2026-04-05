@@ -114,6 +114,32 @@ class TaskQueue {
     }
 
     /**
+     * Pause a running task (blocks between executor waves).
+     */
+    pause(id: string): boolean {
+        const task = this.tasks.get(id);
+        if (!task || task.status !== "running" || !task.executor) return false;
+        task.executor.pause();
+        task.status = "paused" as any;
+        log.info(`Tarea pausada: ${id}`);
+        broadcast({ type: "task_paused", id });
+        return true;
+    }
+
+    /**
+     * Resume a paused task.
+     */
+    resume(id: string): boolean {
+        const task = this.tasks.get(id);
+        if (!task || (task.status as string) !== "paused" || !task.executor) return false;
+        task.executor.resume();
+        task.status = "running";
+        log.info(`Tarea reanudada: ${id}`);
+        broadcast({ type: "task_resumed", id });
+        return true;
+    }
+
+    /**
      * Cancel a running or pending task.
      */
     cancel(id: string): boolean {

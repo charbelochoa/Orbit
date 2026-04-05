@@ -223,6 +223,18 @@ export const orbitConfigSchema = z.object({
         excludePatterns: [],
         errorWatcher: { enabled: false, minIntervalSec: 30 },
     })),
+
+    /**
+     * Agent Executor — Phase 1 safety limits
+     */
+    agent: z.object({
+        /** Maximum steps a single plan can have before rejection */
+        maxPlanSteps: z.number().default(30),
+        /** Maximum replan attempts before aborting */
+        maxReplans:   z.number().default(3),
+        /** Maximum loops for the visual agent loop (Phase 2) */
+        maxVisualLoops: z.number().default(25),
+    }).default(() => ({ maxPlanSteps: 30, maxReplans: 3, maxVisualLoops: 25 })),
 });
 
 export type OrbitConfig = z.infer<typeof orbitConfigSchema>;

@@ -4,6 +4,8 @@ import { loadMemory }    from "../memory/memory-manager.js";
 import { getQueue, TaskPriority } from "../agent/task-queue.js";
 import { isCommand, dispatchCommand } from "../auto-reply/index.js";
 import { resolvePermission, type PermissionAnswer } from "../core/permission-broker.js";
+import { loopRegistry } from "../agent/loop-registry.js";
+import { browserControl } from "../actions/browser-control.js";
 
 const PORT = 18789;
 
@@ -259,6 +261,110 @@ async function handleClientMessage(clientId: string, msg: any, speakFn?: (text: 
         case "electron_connected": {
             const connected = msg.value ?? true;
             _electronConnectedHandler?.(connected);
+            break;
+        }
+
+        // ── Phase 4: Pause/Resume controls ────────────────────────────────
+        case "visual_pause": {
+            const loopId = payload?.id as string | undefined;
+            const loop = loopId ? loopRegistry.get(loopId) : loopRegistry.getActive();
+            if (loop) {
+                loop.pause();
+                client.ws.send(JSON.stringify({ type: "visual_pause_ack", ok: true }));
+            } else {
+                client.ws.send(JSON.stringify({ type: "visual_pause_ack", ok: false, reason: "No hay loop activo" }));
+            }
+            break;
+        }
+
+        case "visual_resume": {
+            const loopId = payload?.id as string | undefined;
+            const loop = loopId ? loopRegistry.get(loopId) : loopRegistry.getActive();
+            if (loop) {
+                loop.resume();
+                client.ws.send(JSON.stringify({ type: "visual_resume_ack", ok: true }));
+            } else {
+                client.ws.send(JSON.stringify({ type: "visual_resume_ack", ok: false, reason: "No hay loop activo" }));
+            }
+            break;
+        }
+
+        case "visual_stop": {
+            const loopId = payload?.id as string | undefined;
+            const loop = loopId ? loopRegistry.get(loopId) : loopRegistry.getActive();
+            if (loop) {
+                loop.stop();
+                client.ws.send(JSON.stringify({ type: "visual_stop_ack", ok: true }));
+            } else {
+                client.ws.send(JSON.stringify({ type: "visual_stop_ack", ok: false, reason: "No hay loop activo" }));
+            }
+            break;
+        }
+
+        case "task_pause": {
+            const taskId = payload?.id as string;
+            const ok = taskId ? getQueue().pause(taskId) : false;
+            client.ws.send(JSON.stringify({ type: "task_pause_ack", id: taskId, ok }));
+            break;
+        }
+
+        case "task_resume": {
+            const taskId = payload?.id as string;
+            const ok = taskId ? getQueue().resume(taskId) : false;
+            client.ws.send(JSON.stringify({ type: "task_resume_ack", id: taskId, ok }));
+            break;
+        }
+
+        // ── Fase 5: Batch pipeline ────────────────────────────────────────
+        case "batch": {
+            if (isTaskRateLimited(clientId)) {
+                client.ws.send(JSON.stringify({ type: "error", message: "Rate limit: máximo 5 tareas por minuto." }));
+                break;
+            }
+            const goals: string[] = Array.isArray(payload?.goals) ? payload.goals : [];
+            if (!goals.length) {
+                client.ws.send(JSON.stringify({ type: "error", message: "batch: se requiere 'goals' (array de strings)" }));
+                break;
+            }
+            const priority = payload?.priority === "high"
+                ? TaskPriority.HIGH
+                : payload?.priority === "low"
+                    ? TaskPriority.LOW
+                    : TaskPriority.NORMAL;
+            const taskIds: string[] = [];
+            for (const goal of goals) {
+                if (typeof goal !== "string" || !goal.trim()) continue;
+                const taskId = getQueue().submit(goal.trim(), priority, (update: string) => {
+                    broadcast({ type: "task_update", taskId, message: update });
+                });
+                taskIds.push(taskId);
+            }
+            client.ws.send(JSON.stringify({ type: "batch_queued", taskIds, count: taskIds.length }));
+            break;
+        }
+// ── Fase 6: Browser Pipeline ────────────────────────────────
+        case "browser_pipeline": {
+            const steps: any[] = Array.isArray(payload?.steps) ? payload.steps : [];
+            if (!steps.length) {
+                client.ws.send(JSON.stringify({ type: "error", message: "browser_pipeline: se requiere 'steps' (array de acciones)" }));
+                break;
+            }
+            const stopOnError = payload?.stop_on_error !== false;
+            const results: Array<{ step: number; action: string; result: string }> = [];
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                try {
+                    const stepResult = await browserControl(step);
+                    results.push({ step: i, action: step.action ?? "?", result: stepResult });
+                    // Broadcast progress
+                    broadcast({ type: "browser_pipeline_step", step: i, total: steps.length, action: step.action, result: stepResult });
+                } catch (e: any) {
+                    results.push({ step: i, action: step.action ?? "?", result: `Error: ${e.message}` });
+                    broadcast({ type: "browser_pipeline_step", step: i, total: steps.length, action: step.action, result: `Error: ${e.message}` });
+                    if (stopOnError) break;
+                }
+            }
+            client.ws.send(JSON.stringify({ type: "browser_pipeline_result", results, count: results.length }));
             break;
         }
 

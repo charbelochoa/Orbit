@@ -350,8 +350,9 @@ async function main() {
     // Phase 10: Memory auto-save every 5 minutes
     startMemoryAutoSave();
 
-    startWebServer(config.server.webPort);
+    // Start gateway FIRST so it's ready when web UI connects
     startGateway(speak);
+    await startWebServer(config.server.webPort);
     console.log(`[Gateway] Session token: ${getSessionToken()}`);
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));

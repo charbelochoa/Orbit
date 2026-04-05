@@ -6,6 +6,8 @@ import { generateText } from "../providers/registry.js";
 import { createLogger } from "../infra/logger.js";
 import { runInLane } from "./lanes.js";
 import { getContextEngine } from "../context/registry.js";
+import { getConfig } from "../config/config.js";
+import { OrbitToolError } from "../core/orbit-error.js";
 
 const log = createLogger("executor");
 
@@ -31,6 +33,9 @@ const MAX_RETRIES = 3;
 
 export class AgentExecutor {
     private isCancelled = false;
+    private _isPaused  = false;
+    private _pausePromise: Promise<void> | null = null;
+    private _resumeResolve: (() => void) | null = null;
     private readonly sessionId: string;
 
     constructor(sessionId?: string) {
@@ -39,10 +44,44 @@ export class AgentExecutor {
 
     public cancel() {
         this.isCancelled = true;
+        // Unblock if paused
+        if (this._isPaused) this.resume();
+    }
+
+    /** Pause after the current wave finishes. */
+    public pause(): void {
+        if (this.isCancelled || this._isPaused) return;
+        this._isPaused = true;
+        this._pausePromise = new Promise(r => { this._resumeResolve = r; });
+        log.info("Executor paused");
+        broadcast({ type: "task_paused" });
+    }
+
+    /** Resume from a paused state. */
+    public resume(): void {
+        if (!this._isPaused) return;
+        this._isPaused = false;
+        this._resumeResolve?.();
+        this._pausePromise = null;
+        log.info("Executor resumed");
+        broadcast({ type: "task_resumed" });
+    }
+
+    /** Internal: block here if paused. */
+    private async _pauseGate(): Promise<void> {
+        if (this._isPaused && this._pausePromise) {
+            await this._pausePromise;
+        }
     }
 
     public async executeGoal(goal: string, speakFallback?: (msg: string) => void): Promise<string> {
         log.info(`Iniciando meta global: ${goal}`);
+
+        // Phase 1 safety: configurable plan limits
+        const agentCfg = getConfig().agent;
+        const maxSteps   = agentCfg?.maxPlanSteps   ?? 30;
+        const maxReplans = agentCfg?.maxReplans      ?? 3;
+
         const plan = await createPlan(goal);
         const steps: PlanStep[] = (plan.steps || []).map((s: any) => ({
             ...s,
@@ -53,6 +92,15 @@ export class AgentExecutor {
 
         if (steps.length === 0) {
             const msg = "No pude elaborar un plan seguro para esta tarea.";
+            if (speakFallback) speakFallback(msg);
+            return msg;
+        }
+
+        // Phase 1 safety: reject oversized plans
+        if (steps.length > maxSteps) {
+            const msg = `Plan rechazado: ${steps.length} pasos excede el limite de ${maxSteps}. Simplifica la tarea o divídela en sub-tareas.`;
+            log.warn(msg);
+            broadcast({ type: "task_complete", success: false, summary: msg });
             if (speakFallback) speakFallback(msg);
             return msg;
         }
@@ -68,6 +116,10 @@ export class AgentExecutor {
         let allSteps = [...steps];
 
         while (allSteps.length > 0 && !this.isCancelled) {
+            // Pause gate — blocks here until resume() is called
+            await this._pauseGate();
+            if (this.isCancelled) break;
+
             // Find steps whose dependencies are all met
             const wave = allSteps.filter(s =>
                 s.dependsOn.every(dep => completed.has(dep))

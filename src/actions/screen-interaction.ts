@@ -19,7 +19,34 @@ import { runPS, getCursorPos, getScreenSize, buildBezierScript } from "./ps-brid
 
 dotenv.config();
 
-// Core: Screenshot + Gemini Vision coordinate finder
+/**
+ * Returns the DPI scale factor of the primary screen (e.g., 1.5 for 150%).
+ * Compares physical screen width (GetSystemMetrics SM_CXSCREEN) with
+ * the logical width stored in getScreenSize (rounded to nearest 0.25).
+ * Cached after first call.
+ */
+let _scaleFactor: number | null = null;
+export async function getDisplayScaleFactor(): Promise<number> {
+    if (_scaleFactor !== null) return _scaleFactor;
+    try {
+        const [logW] = await getScreenSize();
+        const physW = await runPS(
+            `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width`,
+            5000
+        );
+        const physical = parseInt(physW.trim(), 10);
+        if (physical > 0 && logW > 0) {
+            const raw = physical / logW;
+            // Round to nearest quarter-step (1.0, 1.25, 1.5, 1.75, 2.0 …)
+            _scaleFactor = Math.round(raw * 4) / 4;
+        } else {
+            _scaleFactor = 1.0;
+        }
+    } catch {
+        _scaleFactor = 1.0;
+    }
+    return _scaleFactor;
+}
 
 async function captureScreen(): Promise<{ base64: string; path: string }> {
     const tempPath = path.join(os.tmpdir(), `orbit_find_${Date.now()}.png`);

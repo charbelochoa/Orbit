@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100vw; height: 100vh;
+    background: transparent;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  /* Four animated border strips */
+  .edge {
+    position: fixed;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(59,130,246,0.15) 20%,
+      rgba(99,102,241,0.45) 50%,
+      rgba(59,130,246,0.15) 80%,
+      transparent 100%
+    );
+    animation: flow 2s linear infinite;
+  }
+  .top    { top: 0;    left: 0; right: 0; height: 3px; }
+  .bottom { bottom: 0; left: 0; right: 0; height: 3px;
+            animation-delay: -1s; }
+  .left   { top: 0; bottom: 0; left: 0;   width: 3px;
+            background: linear-gradient(
+              180deg,
+              transparent 0%,
+              rgba(59,130,246,0.15) 20%,
+              rgba(99,102,241,0.45) 50%,
+              rgba(59,130,246,0.15) 80%,
+              transparent 100%
+            );
+            animation: flowV 2s linear infinite; animation-delay: -0.5s; }
+  .right  { top: 0; bottom: 0; right: 0;  width: 3px;
+            background: linear-gradient(
+              180deg,
+              transparent 0%,
+              rgba(59,130,246,0.15) 20%,
+              rgba(99,102,241,0.45) 50%,
+              rgba(59,130,246,0.15) 80%,
+              transparent 100%
+            );
+            animation: flowV 2s linear infinite; animation-delay: -1.5s; }
+  @keyframes flow {
+    0%   { background-position: -100vw 0; }
+    100% { background-position: 100vw 0; }
+  }
+  @keyframes flowV {
+    0%   { background-position: 0 -100vh; }
+    100% { background-position: 0 100vh; }
+  }
+  /* Corner glow accents */
+  .corner {
+    position: fixed;
+    width: 24px; height: 24px;
+    border-color: rgba(99,102,241,0.5);
+    border-style: solid;
+  }
+  .tl { top: 0;    left: 0;  border-width: 2px 0 0 2px; }
+  .tr { top: 0;    right: 0; border-width: 2px 2px 0 0; }
+  .bl { bottom: 0; left: 0;  border-width: 0 0 2px 2px; }
+  .br { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+</style>
+</head>
+<body>
+  <div class="edge top"></div>
+  <div class="edge bottom"></div>
+  <div class="edge left"></div>
+  <div class="edge right"></div>
+  <div class="corner tl"></div>
+  <div class="corner tr"></div>
+  <div class="corner bl"></div>
+  <div class="corner br"></div>
+</body>
+</html>

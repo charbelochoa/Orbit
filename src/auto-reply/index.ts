@@ -34,6 +34,8 @@ import { briefingCommand }    from "./commands/briefing.js";
 import { moodCommand }        from "./commands/mood.js";
 import { notifyCommand }      from "./commands/notify.js";
 import { codebaseCommand }    from "./commands/codebase.js";
+import { batchCommand }       from "./commands/batch.js";
+import { crawlCommand }       from "./commands/crawl.js";
 import { resetTokenUsage }    from "../gateway/server.js";
 import type { CommandContext } from "./types.js";
 
@@ -50,6 +52,22 @@ export function initAutoReply(): void {
         description: "Ejecuta una tarea multi-paso con el agente",
         usage:       "/task <objetivo>",
         handler:     taskCommand,
+    });
+
+    commandRegistry.register({
+        name:        "batch",
+        aliases:     ["pipeline"],
+        description: "Ejecuta múltiples objetivos en secuencia (pipeline de tareas)",
+        usage:       "/batch goal1 && goal2 && goal3  — o separa por líneas",
+        handler:     batchCommand,
+    });
+
+    commandRegistry.register({
+        name:        "crawl",
+        aliases:     ["scrape"],
+        description: "Navega a una URL con el navegador y extrae el contenido (funciona con SPAs)",
+        usage:       "/crawl <URL> [save <ruta>]  — Ej: /crawl docs.astro.build save desktop/astro.md",
+        handler:     crawlCommand,
     });
 
     commandRegistry.register({

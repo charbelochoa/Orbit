@@ -1,5 +1,7 @@
 import puppeteer, { Browser, Page } from "puppeteer-core";
-import os from "os";
+import fs   from "fs/promises";
+import path from "path";
+import os   from "os";
 
 // ── Security: URL validation ──────────────────────────────────────────────────
 const BLOCKED_PROTOCOLS = new Set(["file:", "javascript:", "data:", "vbscript:"]);
@@ -78,6 +80,165 @@ switch (action) { case "go_to": { let url = parameters.url;
 case "close": { if (browser) { await browser.close();
     browser = null;}
 return "Navegador cerrado.";}
+
+// ── Fase 6: Browser Pipeline ──────────────────────────────────────────────
+
+case "screenshot": {
+    const fullPage = (parameters.full_page ?? false) as boolean;
+    const buf = await currentPage.screenshot({ type: "png", fullPage }) as Buffer;
+    const tmpPath = path.join(os.tmpdir(), `orbit_screenshot_${Date.now()}.png`);
+    await fs.writeFile(tmpPath, buf);
+    return `Screenshot capturado: ${tmpPath} (${Math.round(buf.length / 1024)} KB)`;
+}
+
+case "wait_for": {
+    const timeout = (parameters.timeout_ms ?? 10_000) as number;
+    const selector = parameters.selector as string | undefined;
+    const urlFrag  = parameters.url   as string | undefined;
+    const titleStr = parameters.title as string | undefined;
+    if (selector) {
+        await currentPage.waitForSelector(selector, { timeout });
+        return `Selector '${selector}' encontrado.`;
+    }
+    if (urlFrag) {
+        await currentPage.waitForFunction(
+            (expected: string) => window.location.href.includes(expected),
+            { timeout },
+            urlFrag
+        );
+        return `URL contiene '${urlFrag}'.`;
+    }
+    if (titleStr) {
+        await currentPage.waitForFunction(
+            (expected: string) => document.title.includes(expected),
+            { timeout },
+            titleStr
+        );
+        return `Título de página contiene '${titleStr}'.`;
+    }
+    return "wait_for requiere 'selector', 'url' o 'title'.";
+}
+
+case "evaluate": {
+    const script = (parameters.script ?? "") as string;
+    if (!script) return "Se requiere 'script' para evaluate.";
+    // Security: block cookie/credential access
+    const BLOCKED_TOKENS = ["document.cookie", ".password", "XMLHttpRequest"];
+    if (BLOCKED_TOKENS.some(t => script.toLowerCase().includes(t.toLowerCase()))) {
+        return "Script bloqueado: no se permite acceso a cookies, contraseñas o XMLHttpRequest.";
+    }
+    // Evaluate expression in page context (read-only DOM queries)
+    const rawResult = await currentPage.evaluate(
+        (s: string) => { return (new Function(`return (${s})`))(); },
+        script
+    );
+    const str = rawResult === null || rawResult === undefined
+        ? "null"
+        : typeof rawResult === "object"
+            ? JSON.stringify(rawResult, null, 2)
+            : String(rawResult);
+    return str.slice(0, 3000);
+}
+
+case "extract": {
+    const mode = (parameters.mode ?? "text") as string;
+    switch (mode) {
+        case "text": {
+            const text = await currentPage.evaluate(
+                () => (document.body as HTMLElement)?.innerText ?? ""
+            );
+            return text.slice(0, 6000) + (text.length > 6000 ? "\n[TRUNCADO]" : "");
+        }
+        case "links": {
+            const links = await currentPage.evaluate(() =>
+                Array.from(document.querySelectorAll("a[href]")).slice(0, 100).map((a: any) => ({
+                    text: (a.innerText ?? "").trim().slice(0, 80),
+                    href: a.href as string,
+                }))
+            );
+            const md = (links as Array<{text: string; href: string}>)
+                .map(l => `- [${l.text || l.href}](${l.href})`)
+                .join("\n");
+            return md.slice(0, 4000) || "No se encontraron enlaces.";
+        }
+        case "table": {
+            const tables = await currentPage.evaluate(() =>
+                Array.from(document.querySelectorAll("table")).map(tbl =>
+                    Array.from(tbl.querySelectorAll("tr")).map(tr =>
+                        Array.from(tr.querySelectorAll("td,th")).map((td: any) => td.innerText.trim())
+                    )
+                )
+            );
+            if (!(tables as string[][][]).length) return "No se encontraron tablas en la página.";
+            const md = (tables as string[][][]).slice(0, 5).map((rows, ti) => {
+                if (!rows.length) return "";
+                const header  = rows[0].map(h => h || " ");
+                const divider = header.map(() => "---");
+                const body    = rows.slice(1)
+                    .map(r => "| " + r.map(c => c || " ").join(" | ") + " |")
+                    .join("\n");
+                return `### Tabla ${ti + 1}\n| ${header.join(" | ")} |\n| ${divider.join(" | ")} |\n${body}`;
+            }).join("\n\n");
+            return md.slice(0, 6000);
+        }
+        case "images": {
+            const imgs = await currentPage.evaluate(() =>
+                Array.from(document.querySelectorAll("img[src]")).slice(0, 50).map((img: any) => ({
+                    alt: (img.alt as string) || "",
+                    src: img.src as string,
+                }))
+            );
+            const md = (imgs as Array<{alt: string; src: string}>)
+                .map(img => `![${img.alt}](${img.src})`)
+                .join("\n");
+            return md.slice(0, 3000) || "No se encontraron imágenes.";
+        }
+        default:
+            return `Modo '${mode}' no soportado. Usa: text | links | table | images`;
+    }
+}
+
+case "fill_form": {
+    const fields = parameters.fields as Record<string, string> | undefined;
+    if (!fields || typeof fields !== "object") {
+        return "Se requiere 'fields' (objeto: { 'selector': 'valor' }).";
+    }
+    let filled = 0;
+    const total = Object.keys(fields).length;
+    for (const [sel, val] of Object.entries(fields)) {
+        try {
+            await currentPage.waitForSelector(sel, { timeout: 5_000 });
+            await currentPage.click(sel, { clickCount: 3 });
+            await currentPage.type(sel, String(val), { delay: 30 });
+            filled++;
+        } catch (e: any) {
+            console.warn(`[Browser] fill_form: selector '${sel}' no encontrado: ${e.message}`);
+        }
+    }
+    return `Formulario rellenado: ${filled}/${total} campos.`;
+}
+
+case "pdf": {
+    const rawOut = (parameters.path ?? "") as string;
+    const outPath = rawOut
+        ? path.resolve(rawOut)
+        : path.join(os.tmpdir(), `orbit_page_${Date.now()}.pdf`);
+    await currentPage.pdf({ path: outPath as any, format: "A4", printBackground: true });
+    return `PDF guardado: ${outPath}`;
+}
+
+case "new_tab": {
+    const newPage = await b.newPage();
+    if (parameters.url) {
+        let tabUrl = parameters.url as string;
+        if (!tabUrl.startsWith("http")) tabUrl = `https://${tabUrl}`;
+        if (!isUrlSafe(tabUrl)) return `URL bloqueada por seguridad: ${tabUrl}`;
+        await newPage.goto(tabUrl, { waitUntil: "domcontentloaded" });
+    }
+    currentPage = newPage;
+    return `Nueva pestaña abierta${parameters.url ? ": " + parameters.url : ""}.`;
+}
+
 default: return `Browser action desconocida: ${action}`;} }catch (e: any) { console.error(`[Browser] Error:`, e);
     return `Fallo en el navegador: ${e.message}`;
     }

@@ -215,16 +215,27 @@ export const TOOL_DECLARATIONS = [
     // ── Browser control ──────────────────────────────────────────────────────
     {
         name: "browser_control",
-        description: "Controla Chrome/Edge con Puppeteer: navegar a URLs, buscar en Google, hacer click, escribir en formularios, leer texto de páginas web, hacer scroll, cerrar el navegador.",
+        description: "Controla Chrome/Edge con Puppeteer (ejecuta JavaScript real, funciona con SPAs). Acciones básicas: go_to, search, click, type, scroll, get_text, close. Acciones avanzadas (Fase 6): screenshot (captura página), wait_for (espera selector/URL/título), evaluate (ejecuta JS de lectura DOM), extract (extrae texto|links|table|images como Markdown), fill_form (rellena múltiples campos a la vez), pdf (exporta página a PDF), new_tab (abre nueva pestaña).",
         parameters: {
             type: "OBJECT",
             properties: {
-                action:   { type: "STRING", description: "go_to | search | click | type | scroll | get_text | close" },
-                url:      { type: "STRING", description: "URL completa para go_to" },
-                query:    { type: "STRING", description: "Búsqueda en Google para action=search" },
-                selector: { type: "STRING", description: "CSS selector para click/type/get_text" },
-                text:     { type: "STRING", description: "Texto para acción type" },
-                direction:{ type: "STRING", description: "up | down para scroll" },
+                action:     { type: "STRING",  description: "go_to | search | click | type | scroll | get_text | close | screenshot | wait_for | evaluate | extract | fill_form | pdf | new_tab" },
+                url:        { type: "STRING",  description: "URL para go_to / new_tab" },
+                query:      { type: "STRING",  description: "Consulta de búsqueda en Google (action=search)" },
+                selector:   { type: "STRING",  description: "CSS selector para click | type | get_text | wait_for" },
+                text:       { type: "STRING",  description: "Texto para acción type" },
+                direction:  { type: "STRING",  description: "up | down para scroll" },
+                // ── Fase 6 ──────────────────────────────────────────────────
+                full_page:  { type: "BOOLEAN", description: "screenshot de página completa (default: false)" },
+                timeout_ms: { type: "INTEGER", description: "Timeout en ms para wait_for (default: 10000)" },
+                title:      { type: "STRING",  description: "Texto esperado en el título de la página (para wait_for)" },
+                script:     { type: "STRING",  description: "Expresión JavaScript de solo lectura DOM (para evaluate). Ej: document.title" },
+                mode:       { type: "STRING",  description: "Qué extraer (para extract): text | links | table | images" },
+                fields: {
+                    type: "OBJECT",
+                    description: "Para fill_form: objeto { 'selector': 'valor' } con los campos del formulario a rellenar",
+                },
+                path:       { type: "STRING",  description: "Ruta de salida para pdf. Default: carpeta temporal" },
             },
             required: ["action"]
         }
@@ -708,6 +719,64 @@ export const TOOL_DECLARATIONS = [
                 loops:        { type: "INTEGER", description: "Veces que repetir el replay (default: 1)" },
             },
             required: ["action"]
+        }
+    },
+
+    // ── Visual Agent Loop (Phase 2) ───────────────────────────────────────────
+    {
+        name: "visual_task",
+        description: "Ejecuta una tarea autónoma controlando el escritorio visualmente. Orbit toma screenshots, analiza la pantalla, y actúa con mouse/teclado en un bucle see→think→act hasta completar la tarea. Ideal para tareas que requieren interactuar con la GUI de aplicaciones: llenar formularios, navegar menús, copiar datos entre apps, etc. El agente puede hacer click, escribir, usar atajos, scroll, drag, y más.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                goal: {
+                    type: "STRING",
+                    description: "Descripción clara de la tarea a realizar. Ej: 'Abre Notepad, escribe Hola Mundo y guárdalo como test.txt en el escritorio'"
+                },
+                maxLoops: {
+                    type: "INTEGER",
+                    description: "Máximo de iteraciones del bucle visual (default: 25, max: 50)"
+                },
+            },
+            required: ["goal"]
+        }
+    },
+
+    // ── Fase 5: Office Files (OfficeCLI) ─────────────────────────────────────
+    {
+        name: "read_office",
+        description: "Lee el contenido de un archivo Office o CSV y lo devuelve como texto/Markdown. Formatos soportados: .docx (Word), .xlsx (Excel → tabla Markdown), .pptx (PowerPoint → diapositivas), .csv. No requiere Microsoft Office instalado.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                path: {
+                    type: "STRING",
+                    description: "Ruta completa al archivo (.docx, .xlsx, .pptx o .csv). Ej: 'desktop/informe.docx', 'C:/Users/HP/Documents/datos.xlsx'"
+                }
+            },
+            required: ["path"]
+        }
+    },
+    {
+        name: "write_office",
+        description: "Crea un archivo Office desde cero. Para .docx acepta 'content' (texto plano o markdown). Para .xlsx acepta 'rows' (array 2D de strings). Para .csv acepta 'rows' o texto 'csv'. No requiere Microsoft Office instalado.",
+        parameters: {
+            type: "OBJECT",
+            properties: {
+                path:      { type: "STRING", description: "Ruta de salida del archivo (.docx, .xlsx o .csv)" },
+                content:   { type: "STRING", description: "Texto del documento (para .docx)" },
+                rows: {
+                    type: "ARRAY",
+                    description: "Datos tabulares para .xlsx o .csv. Array de arrays de strings. Primera fila = encabezados.",
+                    items: {
+                        type: "ARRAY",
+                        items: { type: "STRING" }
+                    }
+                },
+                csv:       { type: "STRING", description: "Texto CSV (alternativa a 'rows' para .xlsx/.csv)" },
+                sheet:     { type: "STRING", description: "Nombre de la hoja (para .xlsx, default: 'Hoja1')" }
+            },
+            required: ["path"]
         }
     },
 ];

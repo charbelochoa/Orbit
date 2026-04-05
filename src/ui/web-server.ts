@@ -28,7 +28,7 @@ const SECURITY_HEADERS: Record<string, string> = {
     "X-Frame-Options":       "DENY",
     "X-XSS-Protection":      "1; mode=block",
     "Referrer-Policy":       "strict-origin-when-cross-origin",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://localhost:18789 ws://127.0.0.1:18789; font-src 'self'; frame-ancestors 'none';",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: blob:; connect-src 'self' ws://localhost:18789 ws://127.0.0.1:18789; font-src 'self'; frame-ancestors 'none';",
     "Permissions-Policy":    "camera=(), microphone=(), geolocation=()",
 };
 

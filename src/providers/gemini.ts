@@ -51,10 +51,15 @@ export class GeminiProvider implements LLMProvider {
             },
         });
 
+        const usage = response.usageMetadata;
         return {
             text:     response.text || "",
             provider: this.id,
             model,
+            usage: usage ? {
+                inputTokens:  usage.promptTokenCount ?? 0,
+                outputTokens: usage.candidatesTokenCount ?? 0,
+            } : undefined,
         };
     }
 

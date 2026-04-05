@@ -42,7 +42,7 @@ function settled<T>(r: PromiseSettledResult<T>): T | null {
 // ── Assembler ─────────────────────────────────────────────────────────────────
 
 export async function assembleBriefing(type: BriefingType = "morning"): Promise<string> {
-    const cfg  = await getConfig();
+    const cfg  = getConfig();
     const city = (cfg as any).briefing?.city || "";
 
     const sections: string[] = [];
