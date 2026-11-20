@@ -177,7 +177,7 @@ const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
   { cmd: "/model",   desc: "Cambia el modelo de IA" },
   { cmd: "/status",  desc: "Estado del sistema" },
   { cmd: "/skills",  desc: "Lista de skills disponibles" },
-  { cmd: "/cancel",  desc: "Cancela una tarea, grupo o subagente" },
+  { cmd: "/cancel",  desc: "Cancela una tarea, grupo, subagente o proceso" },
   { cmd: "/sessions", desc: "Muestra conversaciones guardadas" },
   { cmd: "/resume",  desc: "Continúa una tarea interrumpida" },
   { cmd: "/cost",    desc: "Tokens usados y costo de la sesión" },

@@ -1,8 +1,10 @@
 import { cancelSwarm, getSwarmSummary, listSwarms } from "./swarm.js";
 import { subagentRegistry } from "./subagent-registry.js";
 import { getQueue } from "./task-queue.js";
+import { cancelBackgroundProcess } from "../actions/cmd-control.js";
 
 export function cancelWork(id: string): boolean {
+    if (id.startsWith("bg-")) return cancelBackgroundProcess(id);
     if (id.startsWith("swarm_")) return cancelSwarm(id);
     if (id.startsWith("sub_")) return subagentRegistry.cancel(id);
     return getQueue().cancel(id);

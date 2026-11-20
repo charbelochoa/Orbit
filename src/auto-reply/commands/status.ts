@@ -5,6 +5,7 @@
 
 import { getQueue }            from "../../agent/task-queue.js";
 import { listDelegatedJobs }   from "../../agent/delegated-jobs.js";
+import { getBackgroundProcesses } from "../../actions/cmd-control.js";
 import { toolRegistry }        from "../../core/registry.js";
 import { skillRegistry }       from "../../skills/registry.js";
 import { providerRegistry }    from "../../providers/registry.js";
@@ -44,5 +45,6 @@ export const statusCommand: CommandHandler = async (ctx) => {
         `📋 Tareas: ${pending} pendientes | ${running} activas | ${done} completadas | ${failed} fallidas`,
         ...interrupted.map(task => `Interrumpida ${task.id} · ${task.goal}${task.model ? ` · ${task.model}` : ""}`),
         ...delegated.map(job => `${job.kind === "swarm" ? "Grupo" : "Subagente"} ${job.id} · ${job.goal}`),
+        ...getBackgroundProcesses().map(process => `Proceso ${process.id} · PID ${process.pid} · ${process.stopping ? "deteniendo" : "en ejecución"}`),
     ].join("\n");
 };

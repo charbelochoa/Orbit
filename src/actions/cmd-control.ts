@@ -4,16 +4,29 @@ import { normalizePath, getShellCommand, isElevated } from "../core/path-utils.j
 import { workspaceRoot } from "../core/workspace.js";
 import { boundToolResult } from "../context/text-budget.js";
 import { OrbitToolError } from "../core/orbit-error.js";
-import { ProcessTimeoutError, waitForProcess } from "../infra/process-lifetime.js";
+import { ProcessTimeoutError, stopProcess, waitForProcess } from "../infra/process-lifetime.js";
 
 // ── Background process tracker ───────────────────────────────
 export const cmdEvents = new EventEmitter();
-const backgroundProcesses = new Map<string, { pid: number; label: string; startedAt: number }>();
+const backgroundProcesses = new Map<string, { child: ChildProcess; pid: number; label: string; startedAt: number; stopping?: boolean }>();
 
 export function getBackgroundProcesses() {
-    return Array.from(backgroundProcesses.entries()).map(([id, info]) => ({
-        id, ...info, runningMs: Date.now() - info.startedAt,
+    return Array.from(backgroundProcesses, ([id, info]) => ({
+        id, pid: info.pid, label: info.label, startedAt: info.startedAt, stopping: info.stopping === true,
     }));
+}
+
+export function cancelBackgroundProcess(id: string): boolean {
+    const process = backgroundProcesses.get(id);
+    if (!process || process.child.exitCode !== null || process.child.signalCode !== null) return false;
+    if (!process.stopping) {
+        process.stopping = true;
+        void stopProcess(process.child).catch(error => {
+            process.stopping = false;
+            console.warn("[CMD Control] No se pudo detener " + id, error);
+        });
+    }
+    return true;
 }
 
 // ── Safety hook: block dangerous commands ────────────────────────
@@ -117,7 +130,7 @@ function observeProcess(child: ChildProcess, label: string, background: boolean)
         child.once("spawn", () => {
             if (background) {
                 const pid = child.pid ?? 0;
-                backgroundProcesses.set(id, { pid, label, startedAt: Date.now() });
+                backgroundProcesses.set(id, { child, pid, label, startedAt: Date.now() });
                 resolve("Proceso en segundo plano " + id + " (PID " + pid + ").");
             } else resolve("");
         });
@@ -136,6 +149,7 @@ function observeProcess(child: ChildProcess, label: string, background: boolean)
             if (id) cmdEvents.emit("output", { id, type: "stderr", text });
         });
         child.once("error", reject);
+        if (id) child.once("exit", () => backgroundProcesses.delete(id));
         child.once("close", code => {
             if (id) {
                 backgroundProcesses.delete(id);

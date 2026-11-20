@@ -9,7 +9,7 @@ import type { CommandHandler } from "../types.js";
 export const cancelCommand: CommandHandler = async (ctx) => {
     const taskId = ctx.args[0] ?? "";
     if (!taskId) {
-        return "Uso: /cancel <id de tarea, grupo o subagente>";
+        return "Uso: /cancel <id de tarea, grupo, subagente o proceso>";
     }
 
     return cancelWork(taskId)

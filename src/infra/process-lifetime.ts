@@ -9,7 +9,7 @@ export class ProcessTimeoutError extends Error {
     }
 }
 
-async function stopProcess(child: ChildProcess): Promise<void> {
+export async function stopProcess(child: ChildProcess): Promise<void> {
     if (child.pid && child.exitCode === null && child.signalCode === null) {
         if (process.platform === "win32") {
             await new Promise<void>(resolve => {

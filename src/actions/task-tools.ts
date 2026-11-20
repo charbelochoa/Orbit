@@ -39,7 +39,7 @@ export async function taskStop(args: { task_id: string }): Promise<string> {
 
     const ok = cancelWork(args.task_id);
     return ok
-        ? `Tarea '${args.task_id}' cancelada.`
+        ? `Se solicitó la cancelación de '${args.task_id}'.`
         : `No se pudo cancelar '${args.task_id}' (no existe o ya terminó).`;
 }
 
