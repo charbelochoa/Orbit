@@ -371,7 +371,20 @@ function handle(msg){
         renderMemList();
       }else if(msg.key)updateMem(msg.key,msg.value,msg.ts);
       break;
-    case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(syncTaskSnapshot);if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider)showProvider(msg.provider,msg.model);if(msg.providerId)syncProviderSel(msg.providerId);break;
+    case 'status':
+      if(Array.isArray(msg.tasks)){
+        msg.tasks.filter(task=>task.kind!=='process').reverse().forEach(syncTaskSnapshot);
+        syncBackgroundTasks(msg.tasks.filter(task=>task.kind==='process'));
+      }
+      if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}
+      if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}
+      if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');
+      if(msg.provider)showProvider(msg.provider,msg.model);
+      if(msg.providerId)syncProviderSel(msg.providerId);
+      break;
+    case 'background_processes':
+      if(Array.isArray(msg.tasks))syncBackgroundTasks(msg.tasks);
+      break;
     case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';showProvider(pname,msg.model);if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'provider_configured':
       showProvider(msg.name||msg.provider,msg.model);
@@ -487,8 +500,21 @@ function showProvider(name, model) {
 }
 
 const tasks = Object.create(null);
-const taskLabels = { pending:'En cola', running:'En curso', paused:'Pausada', interrupted:'Interrumpida', done:'Completada', failed:'Fallida', cancelled:'Cancelada', timeout:'Plazo agotado' };
+const taskLabels = { pending:'En cola', running:'En curso', stopping:'Deteniendo', paused:'Pausada', interrupted:'Interrumpida', done:'Completada', failed:'Fallida', cancelled:'Cancelada', timeout:'Plazo agotado' };
 const terminalStepStates = new Set(['done','error','failed','cancelled','timeout']);
+
+function syncBackgroundTasks(processes) {
+  const active = new Set(processes.map(process => process.id));
+  for (const task of Object.values(tasks)) {
+    if (task.kind !== 'process' || active.has(task.id)) continue;
+    g('task-card-' + task.id)?.remove();
+    delete tasks[task.id];
+  }
+  for (const process of processes) {
+    upsertTask(process.id, {kind:'process', title:process.goal, status:process.status, summary:process.id + ' · PID ' + process.pid});
+  }
+  g('tasks-empty').hidden = Object.keys(tasks).length !== 0;
+}
 
 function syncTaskSnapshot(task) {
   const patch = {title:task.goal, status:task.status, provider:task.provider, model:task.model};
@@ -536,12 +562,12 @@ function renderTaskCard(task) {
       esc(step.description||step.tool||'Paso')+(note?'<small>'+esc(note)+'</small>':'')+'</span></li>';
   }).join('');
   const badge = ['failed','timeout'].includes(task.status) ? 'error' : ['running','paused','interrupted','done'].includes(task.status) ? task.status : '';
-  const kind = task.kind === 'swarm' ? 'Grupo' : task.kind === 'subagent' ? 'Subagente' : '';
+  const kind = {swarm:'Grupo', subagent:'Subagente', process:'Proceso'}[task.kind] || '';
   const details = [kind, task.provider, task.model].filter(Boolean).join(' · ');
   card.innerHTML = '<div class="task-card-header"><span class="task-status-dot '+badge+'"></span><span class="task-title">'+
     esc(task.title)+'</span><span class="task-time">'+esc(taskLabels[task.status]||task.status)+'</span></div>'+
     (details ? '<p class="task-model">'+esc(details)+'</p>' : '')+
-    '<progress class="task-progress" aria-label="Progreso" value="'+progress+'" max="100"></progress>'+
+    (task.kind === 'process' ? '' : '<progress class="task-progress" aria-label="Progreso" value="'+progress+'" max="100"></progress>')+
     (steps ? '<ul class="task-steps">'+steps+'</ul>' : '')+
     (task.summary?'<p class="task-summary">'+esc(task.summary)+'</p>':'');
   const controls = document.createElement('div');

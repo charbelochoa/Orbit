@@ -271,7 +271,7 @@ class OrbitCLI {
   private readonly preferredModel?: string;
   private permissionRequests: Array<{ requestId: string; toolId: string; description?: string; args?: unknown }> = [];
   private readonly conversationId: string;
-  private taskSnapshot: Array<{ id: string; goal: string; status: string }> = [];
+  private taskSnapshot: Array<{ id: string; goal: string; status: string; kind?: string }> = [];
   private connected = false;
   private streaming = false;
   private streamBuf = "";
@@ -426,6 +426,7 @@ class OrbitCLI {
         let icon: string;
         switch (t.status) {
           case "running":   icon = `${C.warning}⠸${RESET}`; break;
+          case "stopping":  icon = `${C.warning}…${RESET}`; break;
           case "interrupted": icon = `${C.warning}!${RESET}`; break;
           case "done":      icon = `${C.success}✓${RESET}`; break;
           case "failed":    icon = `${C.error}✗${RESET}`; break;
@@ -625,6 +626,12 @@ class OrbitCLI {
         if (!this.preferredProvider && msg.providerId) this.model = msg.model || msg.providerId;
         if (msg.contextWindow) this.contextMax = msg.contextWindow;
         if (msg.tokensUsed) this.tokensUsed = msg.tokensUsed;
+        break;
+
+      case "background_processes":
+        if (!Array.isArray(msg.tasks)) break;
+        this.taskSnapshot = [...msg.tasks, ...this.taskSnapshot.filter(task => task.kind !== "process")];
+        if (this.taskPanelVisible) this.renderTaskPanel();
         break;
 
       case "token_usage":

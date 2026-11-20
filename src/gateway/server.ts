@@ -7,6 +7,7 @@ import { isCommand, dispatchCommand } from "../auto-reply/index.js";
 import { resolvePermission } from "../core/permission-broker.js";
 import { loopRegistry } from "../agent/loop-registry.js";
 import { executeTool } from "../actions/index.js";
+import { cmdEvents, getBackgroundProcesses } from "../actions/cmd-control.js";
 import { runInLane } from "../agent/lanes.js";
 import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
 import { getConfig, withConfigSnapshot } from "../config/config.js";
@@ -288,6 +289,9 @@ export async function startGateway(
         wss.once("listening", resolve);
         wss.once("error", reject);
     });
+    const publishProcesses = () => broadcast({ type: "background_processes", tasks: getBackgroundProcesses() });
+    cmdEvents.on("background_changed", publishProcesses);
+    wss.once("close", () => cmdEvents.off("background_changed", publishProcesses));
     return wss;
 }
 
@@ -423,7 +427,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 workspace: workspaceRoot(),
                 gemini: providerRegistry.get("gemini")?.isAvailable() ?? false,
                 python: process.env.ORBIT_VISION_ENGINE === "1",
-                tasks: [...listDelegatedJobs(), ...tasks.slice(-100).reverse()],
+                tasks: [...getBackgroundProcesses(), ...listDelegatedJobs(), ...tasks.slice(-100).reverse()],
                 tokensUsed:    _sessionTotalTokens,
                 inputTokens:   _sessionInputTokens,
                 outputTokens:  _sessionOutputTokens,

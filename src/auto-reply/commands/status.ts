@@ -19,11 +19,12 @@ export const statusCommand: CommandHandler = async (ctx) => {
     const failed  = tasks.filter(t => t.status === "failed").length;
     const interrupted = tasks.filter(t => t.status === "interrupted");
     const delegated = listDelegatedJobs().filter(job => job.status === "running" || job.status === "pending");
+    const processes = getBackgroundProcesses();
 
     // Send structured data so the UI can render it properly
     ctx.sendReply({
         type: "status",
-        tasks: [...delegated, ...tasks.map(t => ({
+        tasks: [...processes, ...delegated, ...tasks.map(t => ({
             id:       t.id,
             goal:     t.goal.slice(0, 60),
             status:   t.status,
@@ -45,6 +46,6 @@ export const statusCommand: CommandHandler = async (ctx) => {
         `📋 Tareas: ${pending} pendientes | ${running} activas | ${done} completadas | ${failed} fallidas`,
         ...interrupted.map(task => `Interrumpida ${task.id} · ${task.goal}${task.model ? ` · ${task.model}` : ""}`),
         ...delegated.map(job => `${job.kind === "swarm" ? "Grupo" : "Subagente"} ${job.id} · ${job.goal}`),
-        ...getBackgroundProcesses().map(process => `Proceso ${process.id} · PID ${process.pid} · ${process.stopping ? "deteniendo" : "en ejecución"}`),
+        ...processes.map(process => `Proceso ${process.id} · PID ${process.pid} · ${process.status === "stopping" ? "deteniendo" : "en ejecución"}`),
     ].join("\n");
 };

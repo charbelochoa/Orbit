@@ -12,7 +12,12 @@ const backgroundProcesses = new Map<string, { child: ChildProcess; pid: number; 
 
 export function getBackgroundProcesses() {
     return Array.from(backgroundProcesses, ([id, info]) => ({
-        id, pid: info.pid, label: info.label, startedAt: info.startedAt, stopping: info.stopping === true,
+        id,
+        pid: info.pid,
+        goal: info.label,
+        kind: "process" as const,
+        status: info.stopping ? "stopping" : "running",
+        createdAt: new Date(info.startedAt).toISOString(),
     }));
 }
 
@@ -21,9 +26,11 @@ export function cancelBackgroundProcess(id: string): boolean {
     if (!process || process.child.exitCode !== null || process.child.signalCode !== null) return false;
     if (!process.stopping) {
         process.stopping = true;
+        cmdEvents.emit("background_changed");
         void stopProcess(process.child).catch(error => {
             process.stopping = false;
             console.warn("[CMD Control] No se pudo detener " + id, error);
+            cmdEvents.emit("background_changed");
         });
     }
     return true;
@@ -53,7 +60,8 @@ function redactCmd(cmd: string): string {
         .replace(/password[=:]\s*\S+/gi, "password=***")
         .replace(/(-p|--password)\s+\S+/gi, "$1 ***")
         .replace(/:([^/@:]{2,})@/g, ":***@")
-        .replace(/(token|secret|key|api_key)[=:]\s*\S+/gi, "$1=***");
+        .replace(/(token|secret|key|api_key)[=:]\s*\S+/gi, "$1=***")
+        .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
 }
 
 const READ_ONLY_PATTERNS = [
@@ -131,6 +139,7 @@ function observeProcess(child: ChildProcess, label: string, background: boolean)
             if (background) {
                 const pid = child.pid ?? 0;
                 backgroundProcesses.set(id, { child, pid, label, startedAt: Date.now() });
+                cmdEvents.emit("background_changed");
                 resolve("Proceso en segundo plano " + id + " (PID " + pid + ").");
             } else resolve("");
         });
@@ -149,10 +158,13 @@ function observeProcess(child: ChildProcess, label: string, background: boolean)
             if (id) cmdEvents.emit("output", { id, type: "stderr", text });
         });
         child.once("error", reject);
-        if (id) child.once("exit", () => backgroundProcesses.delete(id));
+        const removeBackground = () => {
+            if (id && backgroundProcesses.delete(id)) cmdEvents.emit("background_changed");
+        };
+        if (id) child.once("exit", removeBackground);
         child.once("close", code => {
             if (id) {
-                backgroundProcesses.delete(id);
+                removeBackground();
                 cmdEvents.emit("done", { id, code, stdout, stderr });
             }
             resolve({ code, stdout, stderr });
