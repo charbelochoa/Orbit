@@ -83,6 +83,12 @@
       }
     ],
     "win": {
+      "extraFiles": [
+        {
+          "from": "electron/orbit.cmd",
+          "to": "orbit.cmd"
+        }
+      ],
       "target": [
         {
           "target": "nsis",

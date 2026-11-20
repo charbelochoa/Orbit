@@ -35,7 +35,9 @@ function showMainWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", showMainWindow);
+  app.on("second-instance", (_event, commandLine) => {
+    if (!commandLine.includes("--background")) showMainWindow();
+  });
 }
 
 function log(msg)  { console.log(`[Electron] ${msg}`); }

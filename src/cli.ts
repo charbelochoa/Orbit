@@ -9,8 +9,25 @@
  */
 
 import { getDaemonService, DATA_DIR, LOGS_DIR } from "./daemon/service.js";
+import { spawn } from "node:child_process";
 
-const HELP = `
+const desktop = process.env.ORBIT_DESKTOP_CLI === "1";
+
+const DESKTOP_HELP = `
+Orbit AI para Windows
+
+  orbit.cmd start                Inicia Orbit o muestra la ventana existente
+  orbit.cmd start --background   Inicia Orbit en la bandeja
+  orbit.cmd chat [opciones]       Abre el chat interactivo de terminal
+  orbit.cmd ask <mensaje>         Escribe una respuesta en stdout
+  orbit.cmd help                 Muestra esta ayuda
+
+Ejecuta orbit.cmd desde la carpeta de instalación, junto a Orbit AI.exe.
+Configura el proveedor y el modelo desde Ajustes en la app de escritorio.
+Usa chat --help y ask --help para ver las opciones de cada comando.
+`.trim();
+
+const SOURCE_HELP = `
 Orbit AI — CLI
 
   orbit start         Inicia el agente y el panel local
@@ -42,17 +59,40 @@ Rutas del servicio:
   Logs dir: ${LOGS_DIR}
 `.trim();
 
+const HELP = desktop ? DESKTOP_HELP : SOURCE_HELP;
+
+function startDesktop(args: string[]): Promise<void> {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.ORBIT_DESKTOP_CLI;
+    return new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, args, { env, detached: true, stdio: "ignore" });
+        child.once("error", reject);
+        child.once("spawn", () => {
+            child.unref();
+            resolve();
+        });
+    });
+}
+
 async function main() {
     const [, , cmd, ...rest] = process.argv;
 
     if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
         console.log(HELP);
-        process.exit(0);
+        return;
+    }
+
+    if (desktop && !["start", "chat", "ask"].includes(cmd)) {
+        console.error("Usa orbit.cmd help para ver los comandos de la instalación de Windows.");
+        process.exitCode = 1;
+        return;
     }
 
     switch (cmd) {
         case "start":
-            await import("./index.js");
+            if (desktop) await startDesktop(rest);
+            else await import("./index.js");
             break;
         case "chat": {
             const { runChat } = await import("./cli-chat.js");
