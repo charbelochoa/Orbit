@@ -14,6 +14,7 @@ type TaskRow = Pick<Task, "id" | "goal" | "workspace" | "priority" | "status"> &
     error: string | null;
     depends_on: string | null;
     checkpoint: string | null;
+    provider_selection: string | null;
 };
 
 export class TaskStore {
@@ -38,7 +39,8 @@ export class TaskStore {
                 result TEXT,
                 error TEXT,
                 depends_on TEXT,
-                checkpoint TEXT
+                checkpoint TEXT,
+                provider_selection TEXT
             );
         `);
         const columns = new Set(this.database.prepare("PRAGMA table_info(tasks)").all().map(column => column.name));
@@ -47,6 +49,9 @@ export class TaskStore {
         }
         if (!columns.has("checkpoint")) {
             this.database.exec("ALTER TABLE tasks ADD COLUMN checkpoint TEXT");
+        }
+        if (!columns.has("provider_selection")) {
+            this.database.exec("ALTER TABLE tasks ADD COLUMN provider_selection TEXT");
         }
     }
 
@@ -71,13 +76,14 @@ export class TaskStore {
             error: row.error ?? undefined,
             dependsOn: row.depends_on ?? undefined,
             checkpoint: row.checkpoint === null ? undefined : JSON.parse(row.checkpoint),
+            providerSelection: row.provider_selection === null ? undefined : JSON.parse(row.provider_selection),
         }));
     }
 
     save(task: Task): void {
         this.database.prepare(`
-            INSERT INTO tasks (id, goal, workspace, priority, status, created_at, started_at, ended_at, output, result, error, depends_on, checkpoint)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, goal, workspace, priority, status, created_at, started_at, ended_at, output, result, error, depends_on, checkpoint, provider_selection)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET status = excluded.status, started_at = excluded.started_at,
                 ended_at = excluded.ended_at, output = excluded.output, result = excluded.result,
                 error = excluded.error, checkpoint = excluded.checkpoint
@@ -86,6 +92,7 @@ export class TaskStore {
             task.startedAt?.getTime() ?? null, task.endedAt?.getTime() ?? null, JSON.stringify(task.output),
             task.result ?? null, task.error ?? null, task.dependsOn ?? null,
             task.checkpoint ? JSON.stringify(task.checkpoint) : null,
+            task.providerSelection ? JSON.stringify(task.providerSelection) : null,
         );
     }
 

@@ -5,6 +5,8 @@ import { broadcast } from "../gateway/server.js";
 import { withWorkspace, workspaceRoot } from "../core/workspace.js";
 import { TaskStore } from "./task-store.js";
 import { summarizeTaskSteps, type TaskCheckpoint } from "./task-checkpoint.js";
+import { providerRegistry } from "../providers/registry.js";
+import { withProviderSelection, type ProviderSelection } from "../providers/selection.js";
 
 const log = createLogger("TaskQueue");
 
@@ -36,6 +38,7 @@ export interface Task {
     id: string;
     goal: string;
     workspace: string;
+    providerSelection?: ProviderSelection;
     dependsOn?: string;
     priority: TaskPriority;
     status: "pending" | "running" | "paused" | "interrupted" | "done" | "failed" | "cancelled";
@@ -114,17 +117,18 @@ class TaskQueue {
             throw new Error("Indica entre 1 y 32 objetivos de hasta 32 000 caracteres cada uno.");
         }
         const workspace = workspaceRoot();
+        const providerSelection = providerRegistry.captureSelection();
         const ids = goals.map(() => `task_${randomUUID()}`);
         const createdAt = new Date();
         const tasks: Task[] = goals.map((goal, index) => ({
-            id: ids[index], goal: goal.trim(), workspace, priority, status: "pending",
+            id: ids[index], goal: goal.trim(), workspace, providerSelection, priority, status: "pending",
             createdAt, output: [], speak, dependsOn: ids[index - 1],
         }));
         this.store.saveBatch(tasks);
         for (const task of tasks) {
             this.tasks.set(task.id, task);
             this.enqueue(task);
-            broadcast({ type: "task_created", id: task.id, goal: task.goal });
+            broadcast({ type: "task_created", id: task.id, goal: task.goal, provider: providerSelection?.providerId, model: providerSelection?.model });
         }
 
         this.processNext();
@@ -169,7 +173,9 @@ class TaskQueue {
                 return;
             }
             task.executor = new AgentExecutor(id);
-            const run = Promise.resolve().then(() => withWorkspace(task.workspace, () => this._run(task))).catch(error => {
+            const run = Promise.resolve().then(() => withWorkspace(task.workspace, () =>
+                withProviderSelection(task.providerSelection, () => this._run(task)),
+            )).catch(error => {
                 log.error("Orbit no pudo guardar el estado de la tarea.", error);
             }).finally(() => {
                 this.active.delete(task);
@@ -315,13 +321,15 @@ class TaskQueue {
     /**
      * Get task status summary.
      */
-    status(id: string): { id: string; status: string; goal: string; output_lines: number; result?: string; error?: string } | undefined {
+    status(id: string) {
         const task = this.tasks.get(id);
         if (!task) return undefined;
         return {
             id: task.id,
             status: task.status,
             goal: task.goal,
+            provider: task.providerSelection?.providerId,
+            model: task.providerSelection?.model,
             output_lines: task.output.length,
             result: task.result?.slice(0, 500),
             error: task.error,
@@ -345,6 +353,8 @@ class TaskQueue {
             id: t.id,
             goal: t.goal.slice(0, 80),
             status: t.status,
+            provider: t.providerSelection?.providerId,
+            model: t.providerSelection?.model,
             priority: TaskPriority[t.priority],
             createdAt: t.createdAt.toISOString(),
             result: t.result?.slice(0, 1000),
