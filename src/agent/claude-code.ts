@@ -1,16 +1,20 @@
 import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { buildProjectContext } from "../context/project-facts.js";
 import { workspaceRoot } from "../core/workspace.js";
+import { ProcessTimeoutError, waitForProcess } from "../infra/process-lifetime.js";
+
+const execFileAsync = promisify(execFile);
 
 export async function runClaudeCode(request: string, edit: boolean, signal?: AbortSignal): Promise<string> {
     if (process.env.ORBIT_CLAUDE_CODE !== "1") {
         throw new Error("Activa ORBIT_CLAUDE_CODE=1 en .env para usar tu instalación de Claude Code.");
     }
+    signal?.throwIfAborted();
     const executable = process.env.ORBIT_CLAUDE_CODE_EXECUTABLE || (process.platform === "win32" ? "claude.exe" : "claude");
     const workspace = workspaceRoot();
     const context = await buildProjectContext();
-    const deadline = AbortSignal.any([AbortSignal.timeout(240_000), ...(signal ? [signal] : [])]);
-    deadline.throwIfAborted();
+    signal?.throwIfAborted();
     const args = [
         "-p", "--output-format", "json", "--no-session-persistence",
         "--restricted", "--safe-mode",
@@ -28,31 +32,25 @@ export async function runClaudeCode(request: string, edit: boolean, signal?: Abo
         request,
     ].join("\n\n");
 
-    return new Promise((resolve, reject) => {
-        const child = execFile(executable, args, {
+    try {
+        const execution = execFileAsync(executable, args, {
             cwd: workspace,
             windowsHide: true,
             maxBuffer: 2 * 1024 * 1024,
-            signal: deadline,
-        }, (error, stdout) => {
-            if (deadline.aborted) {
-                reject(deadline.reason);
-                return;
-            }
-            if (error?.code === "ENOENT") {
-                reject(new Error("No encontré Claude Code. Instálalo y autentícalo con tu cuenta, o indica el ejecutable en ORBIT_CLAUDE_CODE_EXECUTABLE."));
-                return;
-            }
-            try {
-                const result = JSON.parse(stdout);
-                if (!error && !result.is_error && typeof result.result === "string" && result.result.trim()) {
-                    resolve(result.result.trim());
-                    return;
-                }
-            } catch {}
-            reject(new Error("Claude Code no terminó la solicitud. Comprueba su versión y autenticación local."));
         });
-        child.stdin?.on("error", () => {});
-        child.stdin?.end(prompt, "utf-8");
-    });
+        execution.child.stdin?.on("error", () => {});
+        execution.child.stdin?.end(prompt, "utf-8");
+        const { stdout } = await waitForProcess(execution.child, execution, 240_000, signal);
+        const result = JSON.parse(stdout);
+        if (!result.is_error && typeof result.result === "string" && result.result.trim()) {
+            return result.result.trim();
+        }
+    } catch (error) {
+        signal?.throwIfAborted();
+        if (error instanceof ProcessTimeoutError) throw new Error("Claude Code agotó su tiempo de ejecución.");
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            throw new Error("No encontré Claude Code. Instálalo y autentícalo con tu cuenta, o indica el ejecutable en ORBIT_CLAUDE_CODE_EXECUTABLE.");
+        }
+    }
+    throw new Error("Claude Code no terminó la solicitud. Comprueba su versión y autenticación local.");
 }
