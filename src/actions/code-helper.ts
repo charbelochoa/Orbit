@@ -6,6 +6,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { resolveFilePath, withFileMutation, writeFileAtomically } from "../core/file-access.js";
+import { waitForProcess } from "../infra/process-lifetime.js";
 import { generateText } from "../providers/registry.js";
 
 const execFileAsync = promisify(execFile);
@@ -81,17 +82,17 @@ async function runCode(filePath: string, ext: ScriptExtension, signal?: AbortSig
     signal?.throwIfAborted();
     if (!(await fs.stat(filePath)).isFile()) throw new Error("El script debe ser un archivo.");
     const command = scriptCommand(filePath, ext);
+    signal?.throwIfAborted();
     try {
-        const { stdout } = await execFileAsync(command.file, command.args, {
+        const execution = execFileAsync(command.file, command.args, {
             encoding: "utf8",
-            timeout: 30_000,
             cwd: path.dirname(filePath),
             windowsHide: true,
             windowsVerbatimArguments: command.verbatim,
             env: command.env,
-            signal,
         });
-        signal?.throwIfAborted();
+        execution.child.stdin?.end();
+        const { stdout } = await waitForProcess(execution.child, execution, 30_000, signal);
         return { success: true, stdout: stdout.trim() };
     } catch (error) {
         signal?.throwIfAborted();
