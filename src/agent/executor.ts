@@ -178,22 +178,24 @@ export class AgentExecutor {
         while (budget.consume()) {
             signal.throwIfAborted();
             try {
-                const output = await runInLane(taskId, () => {
-                    if (!dispatched) {
+                const output = await runInLane(taskId, () => executeTool(step.tool, parameters, signal, taskId, {
+                    admissionSignal: this.dispatchSignal,
+                    beforeDispatch: () => {
+                        if (dispatched) return;
                         onDispatch();
                         dispatched = true;
-                    }
-                    return executeTool(step.tool, parameters, signal);
-                }, this.dispatchSignal, step.tool);
+                    },
+                }), this.dispatchSignal, step.tool);
                 const failure = getToolFailure(output);
                 if (failure) throw failure;
                 return { stepId: step.step, tool: step.tool, success: true, output };
             } catch (error) {
                 signal.throwIfAborted();
-                if (!dispatched) throw error;
-                if (this.admission.signal.aborted && error === this.admission.signal.reason && retryFailure) {
-                    return retryFailure;
+                if (this.admission.signal.aborted && error === this.admission.signal.reason) {
+                    if (retryFailure) return retryFailure;
+                    throw error;
                 }
+                if (!dispatched && !(error instanceof OrbitToolError)) throw error;
                 const message = error instanceof Error ? error.message : String(error);
                 const denied = error instanceof OrbitToolError && error.code === "PERMISSION_DENIED";
                 const failed = this.failure(step, message, denied);

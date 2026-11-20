@@ -42,13 +42,19 @@ import { getConfig } from "../config/config.js";
 
 const log = createLogger("ToolRouter");
 
+interface DispatchLifecycle {
+    admissionSignal: AbortSignal;
+    beforeDispatch: () => void;
+}
+
 /**
  * Central tool router — maps every tool name Gemini can call to its handler.
  * Phase 1: validates tool existence + policy before dispatch.
  * Phase 6: PreToolUse / PostToolUse lifecycle hooks.
  */
-export async function executeTool(name: string, args: any, signal?: AbortSignal, sessionId?: string): Promise<string> {
-    signal?.throwIfAborted();
+export async function executeTool(name: string, args: any, signal?: AbortSignal, sessionId?: string, lifecycle?: DispatchLifecycle): Promise<string> {
+    const admissionSignal = lifecycle?.admissionSignal ?? signal;
+    admissionSignal?.throwIfAborted();
     const tool = toolRegistry.get(name === "screen_process" ? "screen_vision" : name);
     if (!tool) {
         log.warn(`Tool desconocida: '${name}'`);
@@ -74,8 +80,8 @@ export async function executeTool(name: string, args: any, signal?: AbortSignal,
             .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`)
             .join(", ");
         const desc = policy.reason || `La herramienta '${name}' quiere ejecutarse${argsStr ? ` con: ${argsStr}` : ""}.`;
-        const answer = await requestPermission(name, args || {}, desc, signal);
-        signal?.throwIfAborted();
+        const answer = await requestPermission(name, args || {}, desc, admissionSignal);
+        admissionSignal?.throwIfAborted();
         if (answer === "deny") {
             log.info(`Permiso denegado por el usuario para '${name}'`);
             throw new OrbitToolError(name, "PERMISSION_DENIED", `El usuario denegó la ejecución de '${name}'.`);
@@ -90,11 +96,12 @@ export async function executeTool(name: string, args: any, signal?: AbortSignal,
         return `[Plan Mode] Paso ${idx} registrado: \`${name}\`. Usa \`/plan show\` para ver el plan y \`/plan execute\` para ejecutarlo.`;
     }
 
-    // Phase 6: PreToolUse hooks — can block execution
+    admissionSignal?.throwIfAborted();
+    lifecycle?.beforeDispatch();
     const preHook = await runPreToolHooks(name, args || {});
     if (preHook.blocked) {
         log.warn(`Tool '${name}' bloqueada por hook: ${preHook.reason}`);
-        return `Tool '${name}' bloqueada por hook PreToolUse: ${preHook.reason}`;
+        throw new OrbitToolError(name, "PERMISSION_DENIED", preHook.reason || "El hook PreToolUse bloqueó la herramienta.");
     }
 
     signal?.throwIfAborted();
