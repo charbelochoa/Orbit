@@ -3,6 +3,7 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { resolveFilePath } from "../core/file-access.js";
 import { generateText } from "../providers/registry.js";
 
 const execAsync = promisify(exec);
@@ -49,20 +50,19 @@ export async function codeHelper(parameters: any, signal?: AbortSignal): Promise
     const action   = (parameters?.action ?? "write").toLowerCase().trim();
     const language = (parameters?.language ?? "python").toLowerCase().trim();
     const task     = parameters?.task || parameters?.description || "";
-    const filePath = parameters?.file_path || "";
+    const requestedPath = parameters?.file_path || "";
     const autoRun  = parameters?.auto_run !== false;
 
-    console.log(`[Code Helper] ${action} (${language})`, { task: task.slice(0, 60), filePath });
+    console.log(`[Code Helper] ${action} (${language})`, { task: task.slice(0, 60), filePath: requestedPath });
     try {
+        const filePath = requestedPath ? await resolveFilePath(requestedPath) : "";
         switch (action) {
             case "write": {
                 if (!task) return "Necesito una descripcion de lo que debe hacer el codigo.";
                 const config = LANG_CONFIG[language] || LANG_CONFIG["python"];
                 let code = await generateCode("Implement the requested program in the specified language.", { task, language }, signal);
-                const tmpDir = path.join(os.tmpdir(), "orbit_code");
-                await fs.mkdir(tmpDir, { recursive: true });
-                const targetPath = filePath || path.join(tmpDir, `orbit_script_${Date.now()}${config.ext}`);
                 signal?.throwIfAborted();
+                const targetPath = filePath || path.join(await fs.mkdtemp(path.join(os.tmpdir(), "orbit_code_")), `orbit_script${config.ext}`);
                 await fs.writeFile(targetPath, code, "utf8");
                 if (!autoRun) return `Codigo generado y guardado en: ${targetPath}`;
                 for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS; attempt++) {
