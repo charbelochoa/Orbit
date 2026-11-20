@@ -206,16 +206,18 @@ function setStatus(t,cls){var el=g('status-bar');el.textContent=t;el.className=c
 function setBadge(id,state){var el=g(id);if(!el)return;el.className='st-badge';if(state==='ok'||state===true){el.textContent='Activo';el.classList.add('ok');}else if(state==='err'||state===false){el.textContent='Error';el.classList.add('err');}else{el.textContent=String(state);el.classList.add('warn');}}
 
 function handle(msg){
+  if(msg.requestId && voiceMessages.has(msg.type) && msg.requestId !== voiceTurn?.id)return;
   switch(msg.type){
     case 'orbit_ready':setConn('online');setStatus('');break;
-    case 'user_message':saveChatMessage('user',msg.text);addUserBubble(msg.text);break;
+    case 'user_message':if(voiceTurn&&msg.requestId===voiceTurn.id)renameConvFromFirstMessage(msg.text);saveChatMessage('user',msg.text);addUserBubble(msg.text);break;
     case 'orbit_message':showThinking(false);finishStream();saveChatMessage('orbit',msg.text);addOrbitBubble(msg.text);setStatus('');setSendMode(false);break;
     case 'orbit_chunk':showThinking(false);appendChunk(msg.text);break;
     case 'voice_audio':if(soundsEnabled)orbitAudio.play(msg.pcm,msg.sampleRate);break;
-    case 'turn_complete':finishStream();showThinking(false);if(!g('status-bar').classList.contains('err'))setStatus('');setSendMode(false);break;
+    case 'audio_started':acceptVoiceTurn(msg.requestId);break;
+    case 'turn_complete':if(voiceTurn&&msg.requestId===voiceTurn.id)clearVoiceTurn(msg.success===false);finishStream();showThinking(false);if(!g('status-bar').classList.contains('err'))setStatus('');setSendMode(false);break;
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
     case 'tool_result':finalizeToolBlock(msg.tool,!msg.error,msg.result);finalizeToolEvent(msg.tool,!msg.error,msg.result);break;
-    case 'typing':if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;
+    case 'typing':if(voiceTurn&&msg.requestId===voiceTurn.id&&orbitAudio.capture)break;if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;
     case 'task_created':upsertTask(msg.id,{title:msg.goal,provider:msg.provider,model:msg.model});break;
     case 'task_started':upsertTask(msg.id,{status:'running'});break;
     case 'task_plan':upsertTask(msg.taskId,{title:msg.goal,status:tasks[msg.taskId]?.status==='paused'?'paused':'running',steps:msg.steps||[],provider:msg.provider,model:msg.model});break;
@@ -273,7 +275,7 @@ function handle(msg){
     case 'command_error':addOrbitBubble('! '+(msg.text||msg.message||'Error'));setSendMode(false);break;
     case 'permission_request':queuePermission(msg);break;
     case 'permission_closed':removePermission(msg.requestId);break;
-    case 'error':showThinking(false);setStatus('Error: '+(msg.message||''),'err');setSendMode(false);break;
+    case 'error':if(voiceTurn)stopVoice(false);showThinking(false);setStatus('Error: '+(msg.message||''),'err');setSendMode(false);break;
     case 'chat_cleared':clearChatUI();break;
     case 'subagent_spawned':setStatus('Subagente iniciado: '+(msg.id||''));break;
     case 'subagent_done':setStatus('');break;
@@ -283,7 +285,7 @@ function handle(msg){
 
 var sendStreaming=false;
 function setSendMode(active){sendStreaming=active;var btn=g('send-btn');if(active){btn.disabled=false;btn.classList.add('streaming');btn.title='Detener';btn.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';}else{btn.classList.remove('streaming');btn.title='Enviar (Enter)';btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';btn.disabled=!g('msg-input').value.trim();}}
-function sendMessage(){if(orbitAudio.capture){setStatus('Envía el audio antes de escribir.','warn');return;}if(sendStreaming){orbitAudio.stopPlayback();sendWs({type:'chat',payload:{text:'/stop'}});return;}var inp=g('msg-input'),text=inp.value.trim();if(!text||!ws||ws.readyState!==1)return;if(!activeConvId)createConversation(text.slice(0,42));renameConvFromFirstMessage(text);var conv=getActiveConv();if(conv)conv.messages.push({role:'user',content:text,ts:Date.now()});addUserBubble(text);sendWs({type:'chat',payload:{text:text,conversationId:activeConvId}});renderConvList();inp.value='';inp.style.height='auto';updateCharCount();setSendMode(true);showThinking(true,'Pensando...');hideSlashMenu();}
+function sendMessage(){if(voiceTurn){stopVoice(false);setStatus('Turno de voz cancelado.');return;}if(sendStreaming){orbitAudio.stopPlayback();sendWs({type:'chat',payload:{text:'/stop'}});return;}var inp=g('msg-input'),text=inp.value.trim();if(!text||!ws||ws.readyState!==1)return;orbitAudio.stopPlayback();if(!activeConvId)createConversation(text.slice(0,42));renameConvFromFirstMessage(text);var conv=getActiveConv();if(conv)conv.messages.push({role:'user',content:text,ts:Date.now()});addUserBubble(text);sendWs({type:'chat',payload:{text:text,conversationId:activeConvId}});renderConvList();inp.value='';inp.style.height='auto';updateCharCount();setSendMode(true);showThinking(true,'Pensando...');hideSlashMenu();}
 g('send-btn').addEventListener('click',sendMessage);
 g('msg-input').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}if(e.key==='Escape')hideSlashMenu();if(slashMenuVisible){if(e.key==='ArrowDown'){e.preventDefault();moveSlashSel(1);}if(e.key==='ArrowUp'){e.preventDefault();moveSlashSel(-1);}if(e.key==='Tab'||e.key==='Enter'){if(e.key==='Tab')e.preventDefault();applySlashSel();}}});
 g('msg-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px';g('send-btn').disabled=!this.value.trim()&&!sendStreaming;updateCharCount();handleSlashInput(this.value);});
@@ -455,7 +457,9 @@ function finalizeToolEvent(name,ok,result){var ev=toolEvs.find(function(e){retur
 function renderToolEvs(){var panel=g('view-tools'),empty=g('tools-empty');panel.querySelectorAll('.tool-event').forEach(function(el){el.remove();});empty.style.display=toolEvs.length?'none':'block';toolEvs.slice(0,80).forEach(function(ev){var el=document.createElement('div');el.className='tool-event'+(ev.state==='done'?' done':ev.state==='failed'?' failed':'');var dur=ev.duration!=null?'<span class="tool-ev-dur">'+relMs(ev.duration)+'</span>':'';var preview=ev.result?(typeof ev.result==='string'?ev.result:JSON.stringify(ev.result)):null;if(preview&&preview.length>260)preview=preview.slice(0,260)+'...';el.innerHTML='<div class="tool-event-header"><span class="tool-ev-dot"></span><span class="tool-ev-name">'+esc(ev.name)+'</span>'+dur+'<span class="tool-ev-time">'+new Date(ev.start).toLocaleTimeString()+'</span></div>'+(preview?'<div class="tool-ev-result">'+esc(preview)+'</div>':'');panel.insertBefore(el,empty);});}
 
 const orbitAudio = new OrbitAudio();
+const voiceMessages = new Set(['voice_audio', 'turn_complete', 'typing', 'user_message', 'orbit_message', 'error', 'tool_call', 'tool_result']);
 let voiceConfigured = null;
+let voiceTurn = null;
 const soundsEnabled = true;
 
 g('mic-btn').addEventListener('click', async function() {
@@ -463,38 +467,111 @@ g('mic-btn').addEventListener('click', async function() {
     stopVoice(true);
     return;
   }
-  if (sendStreaming || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (sendStreaming || voiceTurn || orbitAudio.starting || ws?.readyState !== WebSocket.OPEN) return;
   if (voiceConfigured === false) {
     setStatus('Configura GEMINI_API_KEY para usar el micrófono.', 'warn');
     return;
   }
+  if (!activeConvId) createConversation();
+  const turn = {
+    id: crypto.randomUUID(), socket: ws, workspace: getActiveConv()?.workspace,
+    conversationId: activeConvId, pending: [], accepted: false, ending: false, inputDone: false, sent: false, timer: null,
+  };
+  voiceTurn = turn;
+  setSendMode(true);
+  setStatus('Abriendo micrófono...');
   try {
-    if (!await orbitAudio.start(() => stopVoice(true))) return;
-    if (document.hidden || ws?.readyState !== WebSocket.OPEN) {
+    const started = await orbitAudio.start(pcm => queueVoiceFrame(turn, pcm), () => stopVoice(true));
+    if (!started || voiceTurn !== turn || document.hidden || ws !== turn.socket || ws?.readyState !== WebSocket.OPEN) {
+      if (voiceTurn === turn) stopVoice(false);
+      else if (started) orbitAudio.stop();
+      return;
+    }
+    turn.sent = sendVoiceFrame(turn, 'audio_start', { conversationId: turn.conversationId, workspace: turn.workspace });
+    if (!turn.sent) {
       stopVoice(false);
       return;
     }
+    turn.timer = setTimeout(() => {
+      if (voiceTurn !== turn) return;
+      stopVoice(false);
+      setStatus('El servidor no abrió el turno de voz.', 'err');
+    }, 10_000);
+    setStatus('Escuchando...');
     g('mic-btn').setAttribute('aria-pressed', 'true');
     g('voice-banner').classList.add('active');
   } catch {
-    setStatus('No pude abrir el micrófono. Revisa su permiso en Windows.', 'err');
+    if (voiceTurn === turn) {
+      stopVoice(false);
+      setStatus('No pude abrir el micrófono. Revisa su permiso en Windows.', 'err');
+    }
   }
 });
 
-g('voice-stop-btn').textContent = 'Enviar audio';
+g('voice-stop-btn').textContent = 'Terminar grabación';
 g('voice-stop-btn').addEventListener('click', () => stopVoice(true));
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && orbitAudio.capture) stopVoice(false);
+  if (document.hidden && voiceTurn && !voiceTurn.ending) stopVoice(false);
 });
 
-function stopVoice(transmit) {
-  const pcm = orbitAudio.stop();
+function sendVoiceFrame(turn, type, payload = {}) {
+  if (ws !== turn.socket || ws?.readyState !== WebSocket.OPEN) return false;
+  ws.send(JSON.stringify({ type, payload: { requestId: turn.id, ...payload } }));
+  return true;
+}
+
+function queueVoiceFrame(turn, pcm) {
+  if (voiceTurn !== turn || turn.inputDone) return;
+  if (turn.accepted) sendVoiceFrame(turn, 'audio_chunk', { pcm });
+  else turn.pending.push(pcm);
+}
+
+function acceptVoiceTurn(id) {
+  const turn = voiceTurn;
+  if (!turn || turn.id !== id) {
+    if (typeof id === 'string') sendWs({ type: 'audio_cancel', payload: { requestId: id } });
+    return;
+  }
+  clearTimeout(turn.timer);
+  turn.accepted = true;
+  for (const pcm of turn.pending) sendVoiceFrame(turn, 'audio_chunk', { pcm });
+  turn.pending.length = 0;
+  if (turn.inputDone) sendVoiceFrame(turn, 'audio_end');
+}
+
+function clearVoiceTurn(haltPlayback) {
+  clearTimeout(voiceTurn?.timer);
+  voiceTurn = null;
+  orbitAudio.stop();
+  if (haltPlayback) orbitAudio.stopPlayback();
+  showThinking(false);
+  setSendMode(false);
   g('mic-btn').setAttribute('aria-pressed', 'false');
   g('voice-banner').classList.remove('active');
-  if (!transmit || !pcm || ws?.readyState !== WebSocket.OPEN) return;
-  sendWs({ type:'audio', payload:{ pcm, conversationId:activeConvId } });
-  setSendMode(true);
-  setStatus('Procesando audio...');
+}
+
+function stopVoice(transmit) {
+  const turn = voiceTurn;
+  if (transmit) {
+    if (!turn || !orbitAudio.capture || turn.ending) return;
+    turn.ending = true;
+    g('mic-btn').setAttribute('aria-pressed', 'false');
+    g('voice-banner').classList.remove('active');
+    setStatus('Procesando audio...');
+    void orbitAudio.finish().then(() => {
+      if (voiceTurn !== turn) return;
+      turn.inputDone = true;
+      if (turn.accepted) sendVoiceFrame(turn, 'audio_end');
+    }).catch(() => {
+      if (voiceTurn === turn) {
+        stopVoice(false);
+        setStatus('No pude terminar de leer la grabación.', 'err');
+      }
+    });
+    return;
+  }
+  if (turn?.sent) sendVoiceFrame(turn, 'audio_cancel');
+  clearVoiceTurn(true);
 }
 
 const permissionQueue = [];
