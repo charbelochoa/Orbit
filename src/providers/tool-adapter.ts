@@ -1,95 +1,71 @@
-/**
- * Orbit Tool Schema Adapter
- * Phase 2.3 — Converts OrbitTool definitions between provider formats.
- */
-
+import { createHash } from "node:crypto";
+import type { FunctionDeclaration } from "@google/genai";
 import type { OrbitTool } from "../core/registry.js";
+import type { ProviderToolCall, ToolExchange } from "./types.js";
 
-// ── Gemini Format ────────────────────────────────────────────────────────────
-
-/** Convert to Gemini functionDeclarations (native format, no conversion needed) */
-export function toGeminiTools(tools: OrbitTool[]): any[] {
-    return tools.map(t => ({
-        name: t.id,
-        description: t.description,
-        parameters: t.parameters,
+export function toGeminiTools(tools: OrbitTool[]): FunctionDeclaration[] {
+    return tools.map(tool => ({
+        name: tool.id,
+        description: tool.description,
+        parametersJsonSchema: toJsonSchema(tool.parameters),
     }));
 }
 
-// ── OpenAI Format ────────────────────────────────────────────────────────────
-
-/** Convert to OpenAI tools format */
-export function toOpenAITools(tools: OrbitTool[]): any[] {
-    return tools.map(t => ({
+export function toOpenAITools(tools: OrbitTool[]) {
+    return tools.map(tool => ({
         type: "function",
-        function: {
-            name: t.id,
-            description: t.description,
-            parameters: geminiToJsonSchema(t.parameters),
-        },
+        function: { name: tool.id, description: tool.description, parameters: toJsonSchema(tool.parameters) },
     }));
 }
 
-// ── Anthropic Format ─────────────────────────────────────────────────────────
-
-/** Convert to Anthropic tools format */
-export function toAnthropicTools(tools: OrbitTool[]): any[] {
-    return tools.map(t => ({
-        name: t.id,
-        description: t.description,
-        input_schema: geminiToJsonSchema(t.parameters),
+export function toAnthropicTools(tools: OrbitTool[]) {
+    return tools.map(tool => ({
+        name: tool.id,
+        description: tool.description,
+        input_schema: toJsonSchema(tool.parameters),
     }));
 }
 
-// ── Ollama Format (OpenAI-compatible) ────────────────────────────────────────
-
-/** Convert to Ollama tools format (same as OpenAI) */
-export function toOllamaTools(tools: OrbitTool[]): any[] {
-    return toOpenAITools(tools);
-}
-
-// ── Internal Helpers ─────────────────────────────────────────────────────────
-
-/**
- * Convert Gemini parameter schema to JSON Schema.
- *
- * Gemini format:
- *   { type: "OBJECT", properties: { name: { type: "STRING", description: "..." } }, required: ["name"] }
- *
- * JSON Schema:
- *   { type: "object", properties: { name: { type: "string", description: "..." } }, required: ["name"] }
- */
-function geminiToJsonSchema(params: Record<string, any>): Record<string, any> {
-    if (!params) return { type: "object", properties: {} };
-
-    const properties: Record<string, any> = {};
-
-    for (const [key, prop] of Object.entries(params.properties || {})) {
-        const p = prop as any;
-        const schema: any = {
-            type: geminiTypeToJsonType(p.type),
-        };
-        if (p.description) schema.description = p.description;
-        if (p.enum) schema.enum = p.enum;
-        if (p.items) schema.items = geminiToJsonSchema(p.items);
-        properties[key] = schema;
-    }
-
+function toJsonSchema(schema: Record<string, unknown>): Record<string, unknown> {
+    const { type, properties, items, ...keywords } = schema;
     return {
-        type: "object",
-        properties,
-        required: params.required || [],
+        ...keywords,
+        ...(typeof type === "string" ? { type: type.toLowerCase() } : {}),
+        ...(isRecord(properties)
+            ? { properties: Object.fromEntries(Object.entries(properties).map(([key, value]) =>
+                [key, isRecord(value) ? toJsonSchema(value) : value])) }
+            : {}),
+        ...(isRecord(items) ? { items: toJsonSchema(items) } : {}),
     };
 }
 
-function geminiTypeToJsonType(geminiType: string): string {
-    switch (geminiType?.toUpperCase()) {
-        case "STRING":  return "string";
-        case "INTEGER": return "integer";
-        case "NUMBER":  return "number";
-        case "BOOLEAN": return "boolean";
-        case "ARRAY":   return "array";
-        case "OBJECT":  return "object";
-        default:        return "string";
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function parseToolArguments(value: unknown): Record<string, unknown> | undefined {
+    if (typeof value === "string") {
+        try {
+            value = JSON.parse(value.trim().replace(/^\x60{3}(?:json)?\s*|\s*\x60{3}$/gi, ""));
+        } catch {
+            return undefined;
+        }
     }
+    return isRecord(value) ? value : undefined;
+}
+
+export function normalizeToolCalls(calls: ProviderToolCall[], history: ToolExchange[]) {
+    const seen = new Set(history.flatMap(exchange => exchange.outcomes.map(outcome => outcome.call.id)));
+    return calls.map((call, index) => {
+        const args = typeof call.arguments === "string" ? call.arguments : JSON.stringify(call.arguments ?? {});
+        const seed = `${call.name}:${args}:${index}`;
+        const deterministic = "call_" + createHash("sha256").update(seed).digest("hex").slice(0, 12);
+        const rawId = call.id?.trim().split("|", 1)[0];
+        const base = rawId && /^[\w-]{1,52}$/.test(rawId) ? rawId : deterministic;
+        let id = base;
+        for (let duplicate = 2; seen.has(id); duplicate++) id = `${base}_d${duplicate}`;
+        seen.add(id);
+        const name = /^[\w-]{1,64}$/.test(call.name) ? call.name : "unknown_tool";
+        return { ...call, id, name };
+    });
 }

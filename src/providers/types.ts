@@ -3,6 +3,8 @@
  * Phase 2.1 — Common interfaces for multi-provider LLM support.
  */
 
+import type { OrbitTool } from "../core/registry.js";
+
 // ── Text Generation ──────────────────────────────────────────────────────────
 
 export interface TextGenerationParams {
@@ -14,6 +16,11 @@ export interface TextGenerationParams {
     responseFormat?: "text" | "json";
     signal?: AbortSignal;
     image?: ImageAttachment;
+    toolContext?: {
+        tools: OrbitTool[];
+        exchanges: ToolExchange[];
+        allowCalls: boolean;
+    };
 }
 
 export interface ImageAttachment {
@@ -31,6 +38,28 @@ export interface TextGenerationResult {
     usage?:   TokenUsage;
     provider: string;
     model:    string;
+    calls?: ProviderToolCall[];
+    nativeAssistant?: unknown;
+}
+
+export interface ProviderToolCall {
+    id?: string;
+    name: string;
+    arguments: unknown;
+}
+
+export interface ToolOutcome {
+    call: ProviderToolCall & { id: string };
+    output: string;
+    failed: boolean;
+}
+
+export interface ToolExchange {
+    provider: string;
+    model: string;
+    text: string;
+    outcomes: ToolOutcome[];
+    nativeAssistant?: unknown;
 }
 
 export interface TokenUsage {
