@@ -1,9 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 import { KeyedAsyncQueue } from "../infra/keyed-async-queue.js";
 import { raceWithAbortSignal } from "../infra/race-abort.js";
 import { desktopWorker } from "./desktop-worker.js";
+import { createLogger } from "../infra/logger.js";
 
 export type DesktopPoint = [number, number];
 export type MouseButton = "left" | "right" | "double";
@@ -25,6 +27,7 @@ interface Pending {
 }
 
 const queue = new KeyedAsyncQueue();
+const log = createLogger("DesktopBridge");
 const bootstrap = Buffer.from(desktopWorker, "utf16le").toString("base64");
 let session: DesktopSession | undefined;
 let closing = false;
@@ -44,9 +47,13 @@ class DesktopSession {
             stdio: ["pipe", "pipe", "pipe"],
             windowsHide: true,
         });
+        let diagnostics = "";
+        this.child.stderr.setEncoding("utf8");
+        this.child.stderr.on("data", (chunk: string) => { diagnostics = (diagnostics + chunk).slice(-2000); });
         this.closed = new Promise(resolve => {
-            this.child.once("close", () => {
-                this.fail(new Error("El puente de escritorio se cerró."));
+            this.child.once("close", code => {
+                this.fail(new Error(code ? `El puente de escritorio se cerró con código ${code}.` : "El puente de escritorio se cerró."));
+                if (diagnostics.trim()) log.warn(diagnostics.trim());
                 if (session === this) session = undefined;
                 resolve();
             });
@@ -59,7 +66,6 @@ class DesktopSession {
         });
         this.child.on("error", error => this.stop(error));
         this.child.stdin.on("error", error => this.stop(error));
-        this.child.stderr.resume();
         const replies = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
         replies.on("line", line => this.receive(line));
         replies.on("error", error => this.stop(error));
@@ -100,6 +106,12 @@ class DesktopSession {
 
     stop(error: Error): void {
         if (this.fail(error)) this.child.kill();
+    }
+
+    async shutdown(): Promise<void> {
+        this.child.stdin.end();
+        const exited = await Promise.race([this.closed.then(() => true), delay(400, false, { ref: false })]);
+        if (!exited) this.stop(new Error("Orbit se está cerrando."));
     }
 
     async send(command: DesktopCommand): Promise<unknown> {
@@ -144,9 +156,9 @@ function inDesktop<T>(signal: AbortSignal | undefined, operation: (send: (comman
     }, signal);
 }
 
-export function killPS(): void {
+export async function stopDesktopInput(): Promise<void> {
     closing = true;
-    session?.stop(new Error("Orbit se está cerrando."));
+    await session?.shutdown();
 }
 
 export function desktopPoint(x: unknown, y: unknown): DesktopPoint {

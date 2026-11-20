@@ -11,7 +11,7 @@ import { toolRegistry } from "./core/registry.js";
 import { getSystemPrompt } from "./core/prompt.js";
 import { runVoiceTurn } from "./core/voice.js";
 import { executeTool } from "./actions/index.js";
-import { killPS } from "./actions/ps-bridge.js";
+import { stopDesktopInput } from "./actions/ps-bridge.js";
 import { loadConfig, getConfig } from "./config/config.js";
 import { setLogLevel } from "./infra/logger.js";
 import { createLogger } from "./infra/logger.js";
@@ -249,7 +249,7 @@ async function main() {
         } catch (error) {
             log.error("Falló el cierre del agente.", error);
         } finally {
-            killPS();
+            await stopDesktopInput().catch(error => log.warn("No se pudo cerrar el puente de escritorio.", error));
             pythonEngine?.kill();
             process.exit(0);
         }
