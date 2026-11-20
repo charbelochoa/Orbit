@@ -46,6 +46,8 @@ Chat options:
   --no-logo           Skip welcome banner
   --port <number>     Puerto del gateway
   --workspace <path>  Carpeta de trabajo
+  --session <nombre> Retoma una sesión por nombre en esa carpeta
+  --conversation <id> Retoma una conversación guardada
 
 Ejecuta npm ci y npm run build desde el código fuente. Copia .env.example a
 .env y ajusta ORBIT_PROVIDER y la clave del proveedor elegido. Para Ollama,

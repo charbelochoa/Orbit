@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { WebSocket } from "ws";
 import { getConfig } from "./config/config.js";
+import { selectConversationId } from "./core/conversations.js";
 
 export async function runAsk(args: string[]): Promise<void> {
     const { values, positionals } = parseArgs({
@@ -14,12 +15,13 @@ export async function runAsk(args: string[]): Promise<void> {
             "model-name": { type: "string" },
             port: { type: "string" },
             session: { type: "string" },
+            conversation: { type: "string" },
             json: { type: "boolean" },
             help: { type: "boolean", short: "h" },
         },
     });
     if (values.help) {
-        console.log("orbit ask [--workspace <ruta>] [--provider <id> [--model-name <modelo>]] [--port <n>] [--session <nombre>] [--json] <mensaje>");
+        console.log("orbit ask [--workspace <ruta>] [--provider <id> [--model-name <modelo>]] [--port <n>] [--session <nombre> | --conversation <id>] [--json] <mensaje>");
         return;
     }
     if (values["model-name"] !== undefined && !values.provider) throw new Error("Usa --provider junto a --model-name.");
@@ -31,10 +33,9 @@ export async function runAsk(args: string[]): Promise<void> {
     const port = values.port ? Number(values.port) : getConfig().server.gatewayPort;
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Puerto del gateway inválido.");
     const id = randomUUID();
-    const conversationId = values.session
-        ? "cli_" + createHash("sha256").update(workspace).update("\0").update(values.session).digest("hex")
-        : id;
-    const reply = await ask(port, id, { text, workspace, provider: values.provider, model: values["model-name"], conversationId, requestId: id });
+    const conversationId = selectConversationId(workspace, values.conversation, values.session);
+    const requestedWorkspace = values.conversation && !values.workspace ? undefined : workspace;
+    const reply = await ask(port, id, { text, workspace: requestedWorkspace, provider: values.provider, model: values["model-name"], conversationId, requestId: id });
     console.log(values.json ? JSON.stringify({ text: reply, conversationId }) : reply);
 }
 

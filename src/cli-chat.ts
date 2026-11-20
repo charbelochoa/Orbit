@@ -15,7 +15,7 @@ import { WebSocket } from "ws";
 import path from "path";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "url";
-import { randomUUID } from "node:crypto";
+import { selectConversationId } from "./core/conversations.js";
 import { parseArgs } from "node:util";
 import { getConfig } from "./config/config.js";
 import { runHooks, initHooks } from "./hooks/runner.js";
@@ -177,6 +177,7 @@ const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
   { cmd: "/status",  desc: "Estado del sistema" },
   { cmd: "/skills",  desc: "Lista de skills disponibles" },
   { cmd: "/cancel",  desc: "Cancela una tarea, grupo o subagente" },
+  { cmd: "/sessions", desc: "Muestra conversaciones guardadas" },
   { cmd: "/resume",  desc: "Continúa una tarea interrumpida" },
   { cmd: "/cost",    desc: "Tokens usados y costo de la sesión" },
   { cmd: "/compact", desc: "Resume la conversación para liberar contexto" },
@@ -252,6 +253,8 @@ interface CLIOptions {
   compact?: boolean;
   wsPort?: number;
   workspace?: string;
+  conversation?: string;
+  session?: string;
 }
 
 class OrbitCLI {
@@ -260,10 +263,13 @@ class OrbitCLI {
   private spinner = new Spinner();
   private model: string;
   private readonly workspace: string;
+  private readonly requestedWorkspace?: string;
+  private readonly resumeConversation: boolean;
+  private historyLoaded = false;
   private readonly preferredProvider?: string;
   private readonly preferredModel?: string;
   private permissionRequests: Array<{ requestId: string; toolId: string; description?: string; args?: unknown }> = [];
-  private conversationId = randomUUID();
+  private readonly conversationId: string;
   private taskSnapshot: Array<{ id: string; goal: string; status: string }> = [];
   private connected = false;
   private streaming = false;
@@ -298,6 +304,9 @@ class OrbitCLI {
     this.compactMode = opts.compact || false;
     this.noLogo = opts.noLogo || false;
     this.workspace = path.resolve(opts.workspace || process.cwd());
+    this.requestedWorkspace = opts.conversation && !opts.workspace ? undefined : this.workspace;
+    this.conversationId = selectConversationId(this.workspace, opts.conversation, opts.session);
+    this.resumeConversation = opts.conversation !== undefined || opts.session !== undefined;
   }
 
   async start() {
@@ -481,6 +490,9 @@ class OrbitCLI {
         this.showPrompt();
       }
       this.sendWs({ type: "status" });
+      if (this.resumeConversation && !this.historyLoaded) {
+        this.sendWs({ type: "history_get", payload: { conversationId: this.conversationId } });
+      }
     });
 
     this.ws.on("close", () => {
@@ -515,7 +527,7 @@ class OrbitCLI {
 
   private sendWs(obj: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ ...obj, payload: { ...obj.payload, workspace: this.workspace } }));
+      this.ws.send(JSON.stringify({ ...obj, payload: { ...obj.payload, workspace: this.requestedWorkspace } }));
     }
   }
 
@@ -524,6 +536,19 @@ class OrbitCLI {
   private handleMessage(msg: any) {
     switch (msg.type) {
       case "orbit_ready":
+        break;
+
+      case "history_snapshot":
+        if (msg.conversationId !== this.conversationId || this.historyLoaded) break;
+        this.historyLoaded = true;
+        process.stdout.write(`\nConversación ${this.conversationId}\n`);
+        if (msg.workspace && !this.requestedWorkspace) process.stdout.write(`Carpeta ${msg.workspace}\n`);
+        for (const message of Array.isArray(msg.messages) ? msg.messages.slice(-12) : []) {
+          if (typeof message?.content !== "string") continue;
+          const name = message.role === "user" ? "Tú" : "Orbit";
+          process.stdout.write(`\n${name}\n${renderTerminalMarkdown(message.content.replace(/[\u001b\u009b]/g, ""))}\n`);
+        }
+        this.showPrompt();
         break;
 
       case "orbit_message":
@@ -881,6 +906,8 @@ export async function runChat(args = process.argv.slice(2)) {
       compact: { type: "boolean" },
       port: { type: "string" },
       workspace: { type: "string" },
+      conversation: { type: "string" },
+      session: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -899,6 +926,8 @@ ${BOLD}Opciones:${RESET}
   --compact          Mostrar logo condensado
   --port <numero>    Puerto del WebSocket gateway (default: 18789)
   --workspace <ruta> Carpeta para búsquedas, edición y comandos
+  --session <nombre> Sesión reutilizable dentro de la carpeta de trabajo
+  --conversation <id> Retoma una conversación guardada
   -h, --help         Mostrar esta ayuda
 
 ${BOLD}Atajos:${RESET}
@@ -917,7 +946,8 @@ ${BOLD}Atajos:${RESET}
   }
   const cli = new OrbitCLI({
     provider, modelName: values["model-name"], wsPort: port,
-    workspace: values.workspace, noLogo: values["no-logo"], compact: values.compact,
+    workspace: values.workspace, conversation: values.conversation, session: values.session,
+    noLogo: values["no-logo"], compact: values.compact,
   });
   initHooks();
   await cli.start();

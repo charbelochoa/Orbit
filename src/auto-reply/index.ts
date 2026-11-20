@@ -38,10 +38,17 @@ import { codebaseCommand }    from "./commands/codebase.js";
 import { batchCommand }       from "./commands/batch.js";
 import { crawlCommand }       from "./commands/crawl.js";
 import { claudeCommand }      from "./commands/claude.js";
+import { sessionsCommand }    from "./commands/sessions.js";
 import { resetTokenUsage }    from "../gateway/server.js";
 import type { CommandContext } from "./types.js";
 
 export function initAutoReply(): void {
+    commandRegistry.register({
+        name: "sessions",
+        description: "Muestra identificadores de conversaciones guardadas",
+        usage: "/sessions",
+        handler: sessionsCommand,
+    });
     commandRegistry.register({
         name: "claude",
         description: "Delega trabajo a tu instalación de Claude Code",
