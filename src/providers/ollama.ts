@@ -5,6 +5,7 @@
 
 import { getConfig } from "../config/config.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
+import { ProviderHttpError } from "./retry.js";
 
 export class OllamaProvider implements LLMProvider {
     readonly id   = "ollama";
@@ -43,8 +44,7 @@ export class OllamaProvider implements LLMProvider {
         });
 
         if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Ollama error ${res.status}: ${err.slice(0, 200)}`);
+            throw new ProviderHttpError("Ollama", res);
         }
 
         const data: any = await res.json();

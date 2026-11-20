@@ -5,6 +5,7 @@
 
 import { getConfig } from "../config/config.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
+import { ProviderHttpError } from "./retry.js";
 
 export class AnthropicProvider implements LLMProvider {
     readonly id   = "anthropic";
@@ -46,9 +47,7 @@ export class AnthropicProvider implements LLMProvider {
         });
 
         if (!res.ok) {
-            const status = res.status;
-            // Security: never include raw API response in errors (may contain keys/secrets)
-            throw new Error(`Anthropic API error ${status}`);
+            throw new ProviderHttpError("Anthropic", res);
         }
 
         const data: any = await res.json();

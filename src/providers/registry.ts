@@ -11,6 +11,7 @@ import { OpenAIProvider } from "./openai.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OllamaProvider } from "./ollama.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
+import { jitteredBackoff, ProviderHttpError } from "./retry.js";
 
 const log = createLogger("Providers");
 
@@ -25,6 +26,7 @@ interface ProviderHealth {
     lastError?:    string;
     lastErrorAt?:  number;
     cooldownUntil: number;  // timestamp — if Date.now() < this, skip provider
+    consecutiveRateLimits?: number;
 }
 
 // ── Smart routing hints ──────────────────────────────────────────────────────
@@ -131,7 +133,9 @@ class ProviderRegistryClass {
 
             try {
                 const startMs = Date.now();
-                const result = await provider.generateText({ ...params, model: effectiveModel });
+                const deadline = AbortSignal.timeout(45_000);
+                const signal = params.signal ? AbortSignal.any([params.signal, deadline]) : deadline;
+                const result = await provider.generateText({ ...params, model: effectiveModel, signal });
                 params.signal?.throwIfAborted();
                 const elapsed = Date.now() - startMs;
 
@@ -187,6 +191,8 @@ class ProviderRegistryClass {
         const h = this.health.get(id);
         if (!h) return;
         h.totalCalls++;
+        h.consecutiveRateLimits = 0;
+        h.cooldownUntil = 0;
         h.avgLatencyMs = Math.round((h.avgLatencyMs * (h.totalCalls - 1) + latencyMs) / h.totalCalls);
         if (usage) {
             h.totalTokensIn  += usage.inputTokens;
@@ -202,10 +208,14 @@ class ProviderRegistryClass {
         h.lastErrorAt = Date.now();
 
         // Detect rate-limit (429) and apply cooldown
-        const msg = error.message.toLowerCase();
-        if (msg.includes("429") || msg.includes("rate") || msg.includes("quota") || msg.includes("limit")) {
-            h.cooldownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
-            log.warn(`${id} rate-limited → cooldown ${RATE_LIMIT_COOLDOWN_MS / 1000}s`);
+        const status = (error as Error & { status?: number }).status;
+        if (status === 429 || /\b429\b|rate.limit|resource_exhausted|quota exceeded/i.test(error.message)) {
+            const attempt = (h.consecutiveRateLimits ?? 0) + 1;
+            h.consecutiveRateLimits = attempt;
+            const retryAfter = error instanceof ProviderHttpError ? error.retryAfter : undefined;
+            const delay = retryAfter ?? jitteredBackoff(attempt, RATE_LIMIT_COOLDOWN_MS, 120_000);
+            h.cooldownUntil = Math.max(h.cooldownUntil, Date.now() + Math.ceil(delay));
+            log.warn(`${id} en pausa por límite de solicitudes durante ${Math.ceil(delay / 1000)}s.`);
         }
     }
 

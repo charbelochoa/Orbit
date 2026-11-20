@@ -5,6 +5,7 @@
 
 import { getConfig } from "../config/config.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
+import { ProviderHttpError } from "./retry.js";
 
 export class OpenAIProvider implements LLMProvider {
     readonly id   = "openai";
@@ -46,9 +47,7 @@ export class OpenAIProvider implements LLMProvider {
         });
 
         if (!res.ok) {
-            const status = res.status;
-            // Security: never include raw API response in errors (may contain keys/secrets)
-            throw new Error(`OpenAI API error ${status}`);
+            throw new ProviderHttpError("OpenAI", res);
         }
 
         const data: any = await res.json();

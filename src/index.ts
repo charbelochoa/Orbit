@@ -125,10 +125,7 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
             tools: policyEngine.filterTools(toolRegistry.getByProfile(getConfig().toolProfile)),
             maxIterations: getConfig().agent.maxChatSteps,
             signal: deadline,
-            generate: params => providerRegistry.generateText({
-                ...params,
-                signal: AbortSignal.any([deadline, AbortSignal.timeout(45_000)]),
-            }, provider),
+            generate: params => providerRegistry.generateText(params, provider),
             execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name),
             onTool: (name, result, failed) => {
                 if (result === undefined) {
