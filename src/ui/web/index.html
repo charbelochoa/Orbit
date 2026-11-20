@@ -467,7 +467,37 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
                 <option value="ollama">Ollama</option>
               </select>
             </div>
-            <p class="settings-note">Edita el archivo .env para configurar claves, modelos y endpoints. Reinicia Orbit para aplicar los cambios.</p>
+            <p class="settings-note">Desde el navegador puedes usar el archivo .env del agente. Los ajustes del escritorio se aplican al volver a abrir Orbit.</p>
+            <form id="provider-form" hidden>
+              <div class="config-fields">
+                <label class="config-field">Configurar proveedor
+                  <select id="config-provider">
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="ollama">Ollama</option>
+                  </select>
+                </label>
+                <label class="config-field">Modelo
+                  <input id="config-model" maxlength="250" placeholder="Predeterminado del proveedor">
+                </label>
+                <label class="config-field">URL base
+                  <input id="config-endpoint" type="url" maxlength="2048" placeholder="Predeterminada del proveedor">
+                </label>
+                <label class="config-field" id="config-key-field">Clave de API
+                  <input type="password" id="config-key" maxlength="2048" autocomplete="new-password">
+                </label>
+                <label class="config-field" id="config-live-field">Modelo de voz de Gemini
+                  <input id="config-live" maxlength="250" placeholder="Predeterminado de Gemini">
+                </label>
+              </div>
+              <div class="config-options">
+                <label><input type="checkbox" id="config-default">Usar por defecto</label>
+                <label><input type="checkbox" id="config-remove-key">Quitar clave guardada</label>
+              </div>
+              <button class="topbar-action" id="config-save" type="submit">Guardar proveedor</button>
+              <output id="config-status" role="status"></output>
+            </form>
             <div class="st-row" id="settings-edit-row" hidden>
               <button class="topbar-action" id="open-provider-settings">Abrir configuración</button>
             </div>
@@ -502,6 +532,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
 <script src="/voice.js"></script>
+<script src="/provider-form.js"></script>
 <script>
 'use strict';
 /* SESSION TOKEN (injected by web-server) */

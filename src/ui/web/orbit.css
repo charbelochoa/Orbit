@@ -121,6 +121,23 @@ button, input, textarea, select { font: inherit; }
 #project-folder { max-width: 135px; overflow: hidden; text-overflow: ellipsis; }
 .settings-note { padding: 10px 12px; color: var(--text-3); font-size: 12px; }
 #settings-edit-row[hidden] { display: none; }
+#provider-form:not([hidden]) { display: grid; gap: 13px; padding: 14px; }
+.config-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.config-field { display: grid; gap: 5px; min-width: 0; color: var(--text-2); }
+.config-field[hidden] { display: none; }
+.config-field :is(input:not([type=checkbox]), select) {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+}
+.config-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.config-options label { display: flex; align-items: center; gap: 5px; color: var(--text-2); }
+#config-save { justify-self: start; }
+#config-status { color: var(--text-2); }
 #cd-args {
   max-height: 160px;
   overflow: auto;
@@ -152,6 +169,7 @@ button, input, textarea, select { font: inherit; }
   #welcome-prompts { grid-template-columns: 1fr 1fr; }
   #new-chat-btn { margin-inline: 8px; }
   #input-hints > span:nth-child(2) { display: none; }
+  .config-fields { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
