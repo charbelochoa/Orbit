@@ -27,11 +27,22 @@ let restartTimer;
 let restartDelay = 3000;
 let desktopReady = false;
 const startHidden = process.argv.includes("--background");
+let wantsMainWindow = !startHidden;
+let mainWindowReady = false;
+let backendReady = false;
+let bridgeRetry;
 
 function showMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  wantsMainWindow = true;
+  if (!mainWindowReady || !mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+function hideMainWindow() {
+  wantsMainWindow = false;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -92,6 +103,7 @@ function startBackend() {
     child.on("message", message => {
       if (message?.type !== "orbit-ready" || started || isQuitting || backend !== child) return;
       started = true;
+      backendReady = true;
       clearTimeout(timer);
       webUrl = "http://127.0.0.1:" + message.webPort;
       gatewayPort = message.gatewayPort;
@@ -108,7 +120,11 @@ function startBackend() {
     child.on("close", code => {
       clearTimeout(timer);
       logStream.end();
-      if (backend === child) backend = null;
+      if (backend === child) {
+        backend = null;
+        backendReady = false;
+        closeGatewayBridge();
+      }
       if (!started) reject(new Error("El agente terminó con código " + code + "."));
       if (started && !isQuitting) scheduleRestart();
     });
@@ -116,13 +132,16 @@ function startBackend() {
 }
 
 async function restartBackend() {
-  if (isQuitting || backend) return;
+  if (isQuitting) return;
   try {
-    await startBackend();
+    if (!backend) await startBackend();
+    if (!backendReady) {
+      scheduleRestart();
+      return;
+    }
+    await startDesktopUI();
     restartDelay = 3000;
     tray?.setToolTip("Orbit AI");
-    if (desktopReady && mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(webUrl);
-    else await startDesktopUI();
   } catch (error) {
     warn(error.message);
     scheduleRestart();
@@ -212,7 +231,7 @@ function createTray() {
     { label: "Orbit AI", enabled: false },
     { type: "separator" },
     { label: "Mostrar Orbit", click: showMainWindow },
-    { label: "Abrir en navegador", click: () => { if (webUrl) void shell.openExternal(webUrl); } },
+    { label: "Abrir en navegador", click: () => { if (backendReady) void shell.openExternal(webUrl); } },
     { label: "Abrir archivo .env", click: () => { void openProviderSettings().catch(showStartupError); } },
     {
       label: "Mascota flotante",
@@ -236,11 +255,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate(menu));
   tray.setToolTip("Orbit AI");
   tray.setTitle("Orbit");
-  tray.on("double-click", () => {
-    if (mainWindow) {
-      mainWindow.isVisible() ? mainWindow.focus() : mainWindow.show();
-    }
-  });
+  tray.on("double-click", showMainWindow);
   log("System tray creado");
 }
 
@@ -301,17 +316,18 @@ ipcMain.on("overlay_click_through", (_, enabled) => {
 ipcMain.on("overlay_request_focus", () => {
   if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.setIgnoreMouseEvents(false);
 });
-ipcMain.on("window:hide", () => {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+ipcMain.on("window:hide", event => {
+  if (event.sender === mainWindow?.webContents) hideMainWindow();
 });
 ipcMain.on("overlay_toggle_chat", () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.isVisible() ? mainWindow.hide() : (mainWindow.show(), mainWindow.focus());
+  if (mainWindow?.isVisible()) hideMainWindow();
+  else showMainWindow();
 });
 ipcMain.on("overlay_move_to", (_, data) => { sendToOverlay("overlay_move_to", data); });
 
 async function createWindow() {
   log("Creando ventana principal...");
+  mainWindowReady = false;
   const PRELOAD = path.join(__dirname, "preload.cjs");
   mainWindow = new BrowserWindow({
     width: 1120, height: 760, minWidth: 520, minHeight: 520,
@@ -325,19 +341,20 @@ async function createWindow() {
   });
   mainWindow.once("ready-to-show", () => {
     log("Ventana lista");
-    if (!startHidden) showMainWindow();
+    mainWindowReady = true;
+    if (wantsMainWindow && !isQuitting) showMainWindow();
   });
   mainWindow.on("close", (e) => {
     if (!isQuitting) {
       e.preventDefault();
-      mainWindow.hide();
+      hideMainWindow();
       if (tray && !app._trayNotified) {
         tray.displayBalloon?.({ title: "Orbit sigue activo", content: "Corre en segundo plano.", iconType: "info" });
         app._trayNotified = true;
       }
     }
   });
-  mainWindow.on("closed", () => { mainWindow = null; });
+  mainWindow.on("closed", () => { mainWindow = null; mainWindowReady = false; });
   mainWindow.webContents.on("will-navigate", (event, url) => {
     if (new URL(url).origin !== webUrl) event.preventDefault();
   });
@@ -358,21 +375,42 @@ async function createWindow() {
   }
 }
 
+function closeGatewayBridge() {
+  clearTimeout(bridgeRetry);
+  bridgeRetry = undefined;
+  const connection = gatewayWs;
+  gatewayWs = null;
+  connection?.close();
+  sendToOverlay("orb_connected", false);
+}
+
 function connectGatewayBridge() {
+  if (isQuitting || !backendReady || gatewayWs) return;
   let WS;
   try { WS = require("ws"); } catch (_) { return; }
+  function retry() {
+    if (bridgeRetry || isQuitting || !backendReady) return;
+    bridgeRetry = setTimeout(() => {
+      bridgeRetry = undefined;
+      tryConnect();
+    }, 3000);
+  }
   function tryConnect() {
-    if (isQuitting) return;
+    if (isQuitting || !backendReady || gatewayWs) return;
     const wsUrl = "ws://127.0.0.1:" + gatewayPort;
-    try { gatewayWs = new WS.WebSocket(wsUrl); }
-    catch (_) { setTimeout(tryConnect, 5000); return; }
-    gatewayWs.on("open", () => {
+    let connection;
+    try { connection = new WS.WebSocket(wsUrl, { handshakeTimeout: 5000 }); }
+    catch (_) { retry(); return; }
+    gatewayWs = connection;
+    connection.on("open", () => {
+      if (gatewayWs !== connection) return;
       log("Gateway bridge conectado");
       sendToOverlay("orb_connected", true);
       // Notificar al backend que Electron está conectado (habilita toasts nativos)
-      gatewayWs.send(JSON.stringify({ type: "electron_connected", value: true }));
+      connection.send(JSON.stringify({ type: "electron_connected", value: true }));
     });
-    gatewayWs.on("message", (raw) => {
+    connection.on("message", (raw) => {
+      if (gatewayWs !== connection) return;
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
       switch (msg.type) {
@@ -380,7 +418,7 @@ function connectGatewayBridge() {
         case "orbit_message":
           sendToOverlay("orb_speak", { text: msg.text, duration: 5000 });
           sendToOverlay("orb_state", { state: "speaking" });
-          setTimeout(() => sendToOverlay("orb_state", { state: "idle" }), 2000);
+          setTimeout(() => { if (gatewayWs === connection) sendToOverlay("orb_state", { state: "idle" }); }, 2000);
           break;
         case "orbit_chunk":   sendToOverlay("orb_state", { state: "speaking" }); break;
         case "turn_complete": sendToOverlay("orb_state", { state: "idle" }); break;
@@ -392,7 +430,7 @@ function connectGatewayBridge() {
         case "task_update":
           if (msg.status === "done") {
             sendToOverlay("orb_state", { state: "happy" });
-            setTimeout(() => sendToOverlay("orb_state", { state: "idle" }), 3000);
+            setTimeout(() => { if (gatewayWs === connection) sendToOverlay("orb_state", { state: "idle" }); }, 3000);
           }
           break;
         case "user_message": sendToOverlay("orb_state", { state: "thinking" }); break;
@@ -423,10 +461,7 @@ function connectGatewayBridge() {
           if (overlayWindow && !overlayWindow.isDestroyed()) {
             overlayWindow.setIgnoreMouseEvents(false);
           }
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            if (!mainWindow.isVisible()) mainWindow.show();
-            mainWindow.focus();
-          }
+          showMainWindow();
           sendToOverlay("orb_state", { state: "thinking" });
           break;
         }
@@ -465,15 +500,16 @@ function connectGatewayBridge() {
         }
       }
     });
-    gatewayWs.on("close", () => {
+    connection.on("close", () => {
+      if (gatewayWs !== connection) return;
       log("Gateway bridge desconectado - reintentando...");
       sendToOverlay("orb_connected", false);
       gatewayWs = null;
-      if (!isQuitting) setTimeout(tryConnect, 5000);
+      retry();
     });
-    gatewayWs.on("error", () => {});
+    connection.on("error", () => {});
   }
-  setTimeout(tryConnect, 3000);
+  tryConnect();
 }
 
 // ── Phase 3: SetOfMarks, ScreenMarker, Agent Widget ─────────────────────────
@@ -615,11 +651,15 @@ function hideAgentBusy() {
 }
 
 async function startDesktopUI() {
-  if (process.argv.includes("--mascot") && !overlayWindow) createOverlay();
-  await createWindow();
+  if (isQuitting) return;
+  if (!desktopReady) {
+    if (process.argv.includes("--mascot") && !overlayWindow) createOverlay();
+    registerGlobalHotkeys();
+    desktopReady = true;
+  }
   connectGatewayBridge();
-  registerGlobalHotkeys();
-  desktopReady = true;
+  if (!mainWindow || mainWindow.isDestroyed()) await createWindow();
+  else await mainWindow.loadURL(webUrl);
 }
 
 app.whenReady().then(async () => {
@@ -630,19 +670,17 @@ app.whenReady().then(async () => {
     await startBackend();
     await startDesktopUI();
   } catch (error) {
-    if (startHidden) {
-      warn(error.message);
-      scheduleRestart();
-    } else {
-      showStartupError(error);
-      app.quit();
-    }
+    if (isQuitting) return;
+    if (wantsMainWindow) showStartupError(error);
+    else warn(error.message);
+    scheduleRestart();
   }
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  else if (mainWindow) mainWindow.show();
+  if (isQuitting) return;
+  showMainWindow();
+  if (backendReady && !mainWindow) void startDesktopUI().catch(error => { warn(error.message); scheduleRestart(); });
 });
 
 app.on("window-all-closed", () => {});
@@ -651,7 +689,7 @@ app.on("before-quit", event => {
   isQuitting = true;
   clearTimeout(restartTimer);
   globalShortcut.unregisterAll();
-  if (gatewayWs) { try { gatewayWs.close(); } catch (_) {} gatewayWs = null; }
+  closeGatewayBridge();
 
   const child = backend;
   if (!child) return;
@@ -729,14 +767,8 @@ function registerGlobalHotkeys() {
   // Ctrl+Shift+O → toggle ventana principal de Orbit
   const registeredMain = globalShortcut.register("Ctrl+Shift+O", () => {
     log("Ctrl+Shift+O presionado — toggle ventana principal");
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isVisible() && mainWindow.isFocused()) {
-        mainWindow.hide();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
-    }
+    if (mainWindow?.isVisible() && mainWindow.isFocused()) hideMainWindow();
+    else showMainWindow();
   });
   if (registeredMain) log("Hotkey Ctrl+Shift+O registrado (toggle ventana)");
   else warn("No se pudo registrar Ctrl+Shift+O");
@@ -823,8 +855,5 @@ ipcMain.on("overlay_context_action", (_, data) => {
   }
 
   // Show main window with the result
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  showMainWindow();
 });
