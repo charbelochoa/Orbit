@@ -14,6 +14,8 @@ import { createInterface, Interface } from "readline";
 import { WebSocket } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
+import { randomUUID } from "node:crypto";
+import { getConfig } from "./config/config.js";
 import { runHooks, initHooks } from "./hooks/runner.js";
 import { getQueue } from "./agent/task-queue.js";
 
@@ -322,6 +324,8 @@ class OrbitCLI {
   private rl: Interface | null = null;
   private spinner = new Spinner();
   private model: string;
+  private preferredProvider?: string;
+  private conversationId = randomUUID();
   private connected = false;
   private streaming = false;
   private streamBuf = "";
@@ -348,8 +352,9 @@ class OrbitCLI {
   private tabOriginal = "";
 
   constructor(opts: CLIOptions = {}) {
-    this.model = opts.model || "gemini";
-    this.wsPort = opts.wsPort || 18789;
+    this.preferredProvider = opts.model;
+    this.model = opts.model || getConfig().defaultProvider;
+    this.wsPort = opts.wsPort || getConfig().server.gatewayPort;
     this.compactMode = opts.compact || false;
     this.noLogo = opts.noLogo || false;
   }
@@ -513,7 +518,7 @@ class OrbitCLI {
 
   private connect() {
     try {
-      this.ws = new WebSocket(`ws://localhost:${this.wsPort}`);
+      this.ws = new WebSocket(`ws://127.0.0.1:${this.wsPort}`);
     } catch {
       this.scheduleReconnect();
       return;
@@ -843,7 +848,7 @@ class OrbitCLI {
     runHooks("UserMessage", { event: "UserMessage", cwd: process.cwd(), user_message: text }).catch(() => {});
 
     // Send to gateway
-    this.sendWs({ type: "chat", payload: { text } });
+    this.sendWs({ type: "chat", payload: { text, conversationId: this.conversationId, provider: this.preferredProvider } });
     this.spinner.start("Pensando...");
   }
 
@@ -924,9 +929,7 @@ class OrbitCLI {
 
 // ─── Entry point ────────────────────────────────────────────────────────────
 
-async function main() {
-  const args = process.argv.slice(2);
-
+export async function runChat(args = process.argv.slice(2)) {
   // Parse flags
   const opts: CLIOptions = {};
 
@@ -965,7 +968,9 @@ ${BOLD}Atajos:${RESET}
   await cli.start();
 }
 
-main().catch((e) => {
-  console.error(`${C.error}Error fatal:${RESET} ${e.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runChat().catch((e) => {
+    console.error(`${C.error}Error fatal:${RESET} ${e.message}`);
+    process.exit(1);
+  });
+}

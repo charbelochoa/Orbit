@@ -112,7 +112,7 @@ function announce(text: string) {
     broadcast({ type: "orbit_message", text });
 }
 
-async function chat({ text, sessionId, send, signal }: ChatTurn) {
+async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
     send({ type: "typing", state: "thinking" });
     try {
         const history = getHistory(sessionId, 24).flatMap<ChatMessage>(({ role, content }) =>
@@ -129,7 +129,7 @@ async function chat({ text, sessionId, send, signal }: ChatTurn) {
             generate: params => providerRegistry.generateText({
                 ...params,
                 signal: AbortSignal.any([deadline, AbortSignal.timeout(45_000)]),
-            }),
+            }, provider),
             execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline)),
             onTool: (name, result) => {
                 if (result === undefined) {

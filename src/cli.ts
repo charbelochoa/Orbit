@@ -11,8 +11,9 @@
 import { getDaemonService, DATA_DIR, LOGS_DIR } from "./daemon/service.js";
 
 const HELP = `
-Orbit AI — CLI (Phase 8)
+Orbit AI — CLI
 
+  orbit start         Inicia el agente y el panel local
   orbit chat          Interactive terminal chat (like Claude Code)
   orbit install       Register autostart task (Windows Task Scheduler)
   orbit uninstall     Remove autostart task
@@ -24,8 +25,16 @@ Chat options:
   --model <name>      AI provider (gemini, openai, anthropic, ollama)
   --compact           Condensed logo
   --no-logo           Skip welcome banner
+  --port <number>     Puerto del gateway
 
-Paths:
+Ejecuta npm ci y npm run build desde el código fuente. Copia .env.example a
+.env y ajusta ORBIT_PROVIDER y la clave del proveedor elegido. Para Ollama,
+inicia su servidor local y configura OLLAMA_MODEL con un modelo instalado.
+
+Inicia con npm run electron para usar la bandeja, o npm start para usar el
+panel web. En otra terminal, ejecuta npm run cli -- chat.
+
+Rutas del servicio:
   Data dir: ${DATA_DIR}
   Logs dir: ${LOGS_DIR}
 `.trim();
@@ -38,29 +47,20 @@ async function main() {
         process.exit(0);
     }
 
-    const svc = getDaemonService();
-
     switch (cmd) {
+        case "start":
+            await import("./index.js");
+            break;
         case "chat": {
-            // Delegate to cli-chat module — re-exec via tsx/node
-            const { execFileSync } = await import("child_process");
-            const chatScript = new URL("./cli-chat.js", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1");
-            // Forward all remaining args
-            try {
-                execFileSync(process.execPath, [chatScript, "chat", ...rest], {
-                    stdio: "inherit",
-                    env: process.env,
-                });
-            } catch (e: any) {
-                if (e.status) process.exit(e.status);
-            }
+            const { runChat } = await import("./cli-chat.js");
+            await runChat(rest);
             break;
         }
 
         case "install": {
             console.log("Instalando Orbit en Windows Task Scheduler...");
             try {
-                await svc.install();
+                await getDaemonService().install();
                 console.log("✅ Orbit instalado. Se iniciará automáticamente al próximo inicio de sesión.");
             } catch (e: any) {
                 console.error("❌ Error al instalar:", e.message);
@@ -72,7 +72,7 @@ async function main() {
         case "uninstall": {
             console.log("Desinstalando Orbit de Windows Task Scheduler...");
             try {
-                await svc.uninstall();
+                await getDaemonService().uninstall();
                 console.log("✅ Orbit desinstalado. Ya no se iniciará automáticamente.");
             } catch (e: any) {
                 console.error("❌ Error al desinstalar:", e.message);
@@ -82,7 +82,7 @@ async function main() {
         }
 
         case "status": {
-            const info = await svc.status();
+            const info = await getDaemonService().status();
             console.log(`Estado: ${info.status.toUpperCase()}`);
             if (info.taskName) console.log(`Tarea:  ${info.taskName}`);
             if (info.nextRun)  console.log(`Próxima ejecución: ${info.nextRun}`);
@@ -93,7 +93,7 @@ async function main() {
 
         case "logs": {
             const lines = parseInt(rest[0] ?? "100", 10) || 100;
-            const content = await svc.logs(lines);
+            const content = await getDaemonService().logs(lines);
             console.log(content);
             break;
         }

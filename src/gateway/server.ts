@@ -29,6 +29,7 @@ export interface ChatTurn {
     text: string;
     sessionId: string;
     signal: AbortSignal;
+    provider?: string;
     send: (message: Record<string, unknown>) => void;
 }
 
@@ -236,7 +237,8 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             }
             client.turn = new AbortController();
             try {
-                await chat({ text, sessionId, signal: client.turn.signal, send });
+                const provider = typeof payload?.provider === "string" ? payload.provider : undefined;
+                await chat({ text, sessionId, signal: client.turn.signal, send, provider });
             } finally {
                 client.turn = undefined;
             }

@@ -100,10 +100,10 @@ class ProviderRegistryClass {
      * Generate text with automatic fallback.
      * Phase 8.2: rate-limit detection, cooldown, health tracking.
      */
-    async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
+    async generateText(params: TextGenerationParams, providerId?: string): Promise<TextGenerationResult> {
         const config = getConfig();
-        const primary = this._activeProviderId || config.defaultProvider;
-        const chain = [
+        const primary = providerId || this._activeProviderId || config.defaultProvider;
+        const chain = providerId ? [{ provider: primary, model: "" }] : [
             { provider: primary, model: "" },
             ...config.fallbackChain,
             ...this.getAvailable().map(provider => ({ provider: provider.id, model: "" })),
