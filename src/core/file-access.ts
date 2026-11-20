@@ -57,7 +57,8 @@ async function resolveExistingAncestor(target: string): Promise<string> {
     }
 }
 
-export async function writeFileAtomically(target: string, content: string): Promise<void> {
+export async function writeFileAtomically(target: string, content: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     let mode: number | undefined;
     try {
         const current = await fs.lstat(target);
@@ -68,7 +69,8 @@ export async function writeFileAtomically(target: string, content: string): Prom
     }
     const temporary = path.join(path.dirname(target), ".orbit-write-" + randomUUID());
     try {
-        await fs.writeFile(temporary, content, { encoding: "utf-8", flag: "wx", mode });
+        await fs.writeFile(temporary, content, { encoding: "utf-8", flag: "wx", mode, signal });
+        signal?.throwIfAborted();
         await fs.rename(temporary, target);
     } finally {
         await fs.unlink(temporary).catch(() => {});

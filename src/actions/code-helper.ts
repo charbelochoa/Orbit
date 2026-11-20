@@ -5,7 +5,7 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
-import { resolveFilePath } from "../core/file-access.js";
+import { resolveFilePath, withFileMutation, writeFileAtomically } from "../core/file-access.js";
 import { generateText } from "../providers/registry.js";
 
 const execFileAsync = promisify(execFile);
@@ -94,6 +94,30 @@ async function runCode(filePath: string, ext: ScriptExtension, signal?: AbortSig
     }
 }
 
+async function writeScript(filePath: string, task: string, language: string, ext: ScriptExtension, autoRun: boolean, signal?: AbortSignal): Promise<string> {
+    let code = await generateCode("Implement the requested program in the specified language.", { task, language }, signal);
+    signal?.throwIfAborted();
+    const targetPath = filePath || path.join(await fs.mkdtemp(path.join(os.tmpdir(), "orbit_code_")), `orbit_script${ext}`);
+    return withFileMutation([targetPath], async () => {
+        signal?.throwIfAborted();
+        await writeFileAtomically(targetPath, code, signal);
+        if (!autoRun) return `Código generado y guardado en: ${targetPath}`;
+        for (let attempt = 1; ; attempt++) {
+            const result = await runCode(targetPath, ext, signal);
+            if (result.success) {
+                const output = result.stdout || "(sin salida)";
+                return `Código ejecutado correctamente.\nArchivo: ${targetPath}\nSalida:\n${output.slice(0, 2000)}`;
+            }
+            if (attempt === MAX_FIX_ATTEMPTS) {
+                return `Código guardado, pero falló tras ${attempt} intentos.\nArchivo: ${targetPath}\nÚltimo error: ${result.stderr.slice(0, 500)}`;
+            }
+            console.log(`[Code Helper] Intento ${attempt} falló, corrigiendo...`);
+            code = await generateCode("Repair the program using the reported error.", { code, error: result.stderr, language }, signal);
+            await writeFileAtomically(targetPath, code, signal);
+        }
+    });
+}
+
 export async function codeHelper(parameters: any, signal?: AbortSignal): Promise<string> {
     const action   = (parameters?.action ?? "write").toLowerCase().trim();
     const language = (parameters?.language ?? "").toLowerCase().trim();
@@ -107,30 +131,9 @@ export async function codeHelper(parameters: any, signal?: AbortSignal): Promise
         const ext = scriptExtension(language, filePath);
         const sourceLanguage = language || ext.slice(1);
         switch (action) {
-            case "write": {
-                if (!task) return "Necesito una descripcion de lo que debe hacer el codigo.";
-                let code = await generateCode("Implement the requested program in the specified language.", { task, language: sourceLanguage }, signal);
-                signal?.throwIfAborted();
-                const targetPath = filePath || path.join(await fs.mkdtemp(path.join(os.tmpdir(), "orbit_code_")), `orbit_script${ext}`);
-                await fs.writeFile(targetPath, code, "utf8");
-                if (!autoRun) return `Codigo generado y guardado en: ${targetPath}`;
-                for (let attempt = 0; attempt < MAX_FIX_ATTEMPTS; attempt++) {
-                    const result = await runCode(targetPath, ext, signal);
-                    if (result.success) {
-                        const output = result.stdout || "(sin salida)";
-                        return `Codigo ejecutado correctamente.\nArchivo: ${targetPath}\nSalida:\n${output.substring(0, 2000)}`;
-                    }
-                    if (attempt < MAX_FIX_ATTEMPTS - 1) {
-                        console.log(`[Code Helper] Intento ${attempt + 1} fallo, corrigiendo...`);
-                        code = await generateCode("Repair the program using the reported error.", { code, error: result.stderr, language: sourceLanguage }, signal);
-                        signal?.throwIfAborted();
-                        await fs.writeFile(targetPath, code, "utf8");
-                    } else {
-                        return `Codigo generado pero fallo tras ${MAX_FIX_ATTEMPTS} intentos.\nArchivo: ${targetPath}\nUltimo error: ${result.stderr.substring(0, 500)}`;
-                    }
-                }
-                return `Codigo guardado en: ${targetPath}`;
-            }
+            case "write":
+                if (!task) return "Necesito una descripción de lo que debe hacer el código.";
+                return await writeScript(filePath, task, sourceLanguage, ext, autoRun, signal);
             case "run": {
                 if (!filePath) return "Necesito el file_path del archivo a ejecutar.";
                 const result = await runCode(filePath, ext, signal);
@@ -139,13 +142,14 @@ export async function codeHelper(parameters: any, signal?: AbortSignal): Promise
             }
             case "fix": {
                 if (!filePath) return "Necesito el file_path del archivo a corregir.";
-                const code = await fs.readFile(filePath, { encoding: "utf8", signal });
-                const result = await runCode(filePath, ext, signal);
-                if (result.success) return "El codigo ya funciona correctamente.";
-                const fixed = await generateCode("Repair the program using the reported error.", { code, error: result.stderr, language: sourceLanguage }, signal);
-                signal?.throwIfAborted();
-                await fs.writeFile(filePath, fixed, "utf8");
-                return `Codigo corregido en: ${filePath}`;
+                return await withFileMutation([filePath], async () => {
+                    const code = await fs.readFile(filePath, { encoding: "utf8", signal });
+                    const result = await runCode(filePath, ext, signal);
+                    if (result.success) return "El código ya funciona correctamente.";
+                    const fixed = await generateCode("Repair the program using the reported error.", { code, error: result.stderr, language: sourceLanguage }, signal);
+                    await writeFileAtomically(filePath, fixed, signal);
+                    return `Código corregido en: ${filePath}`;
+                });
             }
             case "explain": {
                 let code = "";
