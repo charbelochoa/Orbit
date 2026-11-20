@@ -141,7 +141,6 @@ export class AgentExecutor {
         const success = completed === steps.length;
         const summary = await this.summarize(goal, report, steps.length, signal);
         signal.throwIfAborted();
-        if (!journal) broadcast({ type: "task_complete", taskId, success, summary });
         if (onProgress) onProgress(summary);
 
         try {
@@ -153,6 +152,8 @@ export class AgentExecutor {
             });
         } catch {}
 
+        signal.throwIfAborted();
+        if (!journal) broadcast({ type: "task_complete", taskId, success, summary });
         if (!success) throw new Error(summary);
         return summary;
     }

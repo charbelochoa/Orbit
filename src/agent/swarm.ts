@@ -1,240 +1,173 @@
-/**
- * Orbit Swarm Orchestrator — Sprint 5
- * Executes multiple agent goals in parallel using SubagentRegistry + lanes.
- *
- * A "swarm" is a named group of tasks that run concurrently.
- * The orchestrator:
- *   1. Spawns N subagents in parallel (respecting lane limits)
- *   2. Aggregates results/errors as each finishes
- *   3. Broadcasts real-time progress to the UI via WebSocket
- *   4. Returns a structured SwarmResult when all done (or on timeout)
- *
- * Example use:
- *   const result = await runSwarm("audit", [
- *     { id: "security",    goal: "Analiza el código buscando vulnerabilidades OWASP" },
- *     { id: "performance", goal: "Revisa los cuellos de botella de rendimiento" },
- *     { id: "tests",       goal: "Comprueba la cobertura de tests y sugiere los que faltan" },
- *     { id: "docs",        goal: "Evalúa si la documentación está actualizada" },
- *   ]);
- */
-
+import { randomUUID } from "node:crypto";
 import { subagentRegistry } from "./subagent-registry.js";
-import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 
-const log = createLogger("swarm");
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 export interface SwarmTask {
-    /** Unique ID within the swarm (e.g. "security", "tests") */
-    id:       string;
-    /** The goal to pass to the subagent */
-    goal:     string;
-    /** Optional context text injected as prefix into the goal */
+    id: string;
+    goal: string;
     context?: string;
-    /** Timeout for this specific task in ms (overrides swarm default) */
     timeoutMs?: number;
 }
 
+type TaskOutcome = "done" | "failed" | "cancelled" | "timeout";
+
 export interface SwarmTaskResult {
-    id:        string;
-    goal:      string;
-    status:    "done" | "failed" | "cancelled" | "timeout";
-    result?:   string;
-    error?:    string;
+    id: string;
+    goal: string;
+    status: TaskOutcome;
+    result?: string;
+    error?: string;
     durationMs: number;
 }
 
 export interface SwarmResult {
-    swarmId:     string;
-    name:        string;
-    totalTasks:  number;
-    succeeded:   number;
-    failed:      number;
-    durationMs:  number;
-    tasks:       SwarmTaskResult[];
-    /** Merged summary of all results (for the calling agent to use) */
-    summary:     string;
+    swarmId: string;
+    name: string;
+    totalTasks: number;
+    succeeded: number;
+    failed: number;
+    durationMs: number;
+    tasks: SwarmTaskResult[];
+    summary: string;
 }
 
-export interface SwarmOptions {
-    /** Human name for the swarm (displayed in UI) */
-    name?:         string;
-    /** Parent session ID for subagent scoping */
-    sessionId?:    string;
-    /** Global timeout for the entire swarm in ms (default: 5 min) */
-    timeoutMs?:    number;
-    /** Per-task default timeout in ms (default: 2 min) */
+interface SwarmOptions {
+    name?: string;
+    sessionId?: string;
+    timeoutMs?: number;
     taskTimeoutMs?: number;
-    /** Max concurrent tasks (default: 4 — respects global lane limits) */
-    concurrency?:  number;
+    concurrency?: number;
+    signal?: AbortSignal;
 }
 
-// ── Swarm Registry (in-memory, for status queries) ───────────────────────────
-
-const activeSwarms = new Map<string, SwarmResult & { startedAt: number; done: boolean }>();
-
-export function getActiveSwarms(): Array<SwarmResult & { startedAt: number; done: boolean }> {
-    return Array.from(activeSwarms.values());
+interface SwarmState {
+    id: string;
+    name: string;
+    status: "running" | TaskOutcome;
+    createdAt: string;
+    steps: Array<{ step: number; id: string; description: string; state: "pending" | "running" | TaskOutcome; error?: string }>;
+    summary?: string;
+    controller: AbortController;
 }
 
-// ── Main API ──────────────────────────────────────────────────────────────────
+const swarms = new Map<string, SwarmState>();
 
-/**
- * Run a swarm of parallel tasks and return aggregated results.
- */
-export async function runSwarm(
-    tasks:   SwarmTask[],
-    options: SwarmOptions = {},
-): Promise<SwarmResult> {
-    const swarmId     = `swarm_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
-    const name        = options.name ?? `Swarm(${tasks.length})`;
-    const sessionId   = options.sessionId ?? "swarm_parent";
-    const swarmTimeout = options.timeoutMs ?? 5 * 60_000;
-    const taskTimeout  = options.taskTimeoutMs ?? 2 * 60_000;
-    const concurrency  = options.concurrency ?? 4;
-    const startedAt    = Date.now();
+export function listSwarms() {
+    return Array.from(swarms.values(), ({ controller, ...swarm }) => swarm);
+}
 
-    log.info(`Swarm '${name}' [${swarmId}]: lanzando ${tasks.length} tareas (concurrency: ${concurrency})`);
+export function cancelSwarm(id: string): boolean {
+    const swarm = swarms.get(id);
+    if (!swarm || swarm.status !== "running" || swarm.controller.signal.aborted) return false;
+    swarm.controller.abort(new Error("Grupo cancelado por el usuario."));
+    return true;
+}
 
-    broadcast({
-        type:     "swarm_started",
-        swarmId,
-        name,
-        total:    tasks.length,
-        tasks:    tasks.map(t => ({ id: t.id, goal: t.goal.slice(0, 80) })),
-    });
+export function stopSwarms(): void {
+    for (const { id } of swarms.values()) cancelSwarm(id);
+}
 
-    // ── Run tasks with bounded concurrency ────────────────────────────────────
-    const taskResults: SwarmTaskResult[] = [];
-    const pending = [...tasks];
-    const inFlight = new Set<Promise<void>>();
+function abortOutcome(signal: AbortSignal): "timeout" | "cancelled" {
+    return signal.reason?.name === "TimeoutError" ? "timeout" : "cancelled";
+}
 
-    const runTask = async (task: SwarmTask): Promise<void> => {
-        const taskStart = Date.now();
+function abortMessage(status: "timeout" | "cancelled"): string {
+    return status === "timeout" ? "Se agotó el plazo del grupo." : "Se canceló el grupo de subagentes.";
+}
 
-        // Build full goal (optionally prefixed with context)
-        const fullGoal = task.context
-            ? `Context:\n${task.context}\n\nTarea:\n${task.goal}`
-            : task.goal;
+export async function runSwarm(tasks: SwarmTask[], options: SwarmOptions = {}): Promise<SwarmResult> {
+    options.signal?.throwIfAborted();
+    if (!Array.isArray(tasks) || !tasks.length || tasks.length > 32 || tasks.some(task =>
+        !task || typeof task.id !== "string" || !/^[\w.-]{1,80}$/.test(task.id) ||
+        typeof task.goal !== "string" || !task.goal.trim() || task.goal.length > 32_000,
+    ) || new Set(tasks.map(task => task.id)).size !== tasks.length) {
+        throw new Error("Indica entre 1 y 32 subtareas con identificadores únicos y objetivos válidos.");
+    }
+    const concurrency = options.concurrency ?? 4;
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 6) {
+        throw new Error("Indica entre 1 y 6 subagentes en paralelo.");
+    }
+    const timeoutMs = options.timeoutMs ?? 300_000;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 3_600_000) {
+        throw new Error("El tiempo límite del grupo debe estar entre 1 y 3 600 000 ms.");
+    }
 
-        broadcast({ type: "swarm_task_start", swarmId, taskId: task.id, goal: task.goal.slice(0, 80) });
+    const controller = new AbortController();
+    const signals = [controller.signal, AbortSignal.timeout(timeoutMs)];
+    if (options.signal) signals.push(options.signal);
+    const signal = AbortSignal.any(signals);
+    const swarmId = `swarm_${randomUUID()}`;
+    const name = options.name?.trim().slice(0, 120) || `Grupo de ${tasks.length} subtareas`;
+    const startedAt = Date.now();
+    const state: SwarmState = {
+        id: swarmId, name, status: "running", controller,
+        createdAt: new Date(startedAt).toISOString(),
+        steps: tasks.map((task, index) => ({ step: index + 1, id: task.id, description: task.goal.slice(0, 160), state: "pending" })),
+    };
+    swarms.set(swarmId, state);
+    if (swarms.size > 40) {
+        const expired = [...swarms].find(([, swarm]) => swarm.status !== "running");
+        if (expired) swarms.delete(expired[0]);
+    }
+    broadcast({ type: "swarm_started", swarmId, name, total: tasks.length, steps: state.steps });
 
-        let subId: string;
-        try {
-            subId = await subagentRegistry.spawn({
-                goal:            fullGoal,
-                parentSessionId: sessionId,
-                timeoutMs:       task.timeoutMs ?? taskTimeout,
-            });
-        } catch (e: any) {
-            taskResults.push({
-                id: task.id, goal: task.goal,
-                status: "failed", error: `spawn failed: ${e.message}`,
-                durationMs: Date.now() - taskStart,
-            });
-            broadcast({ type: "swarm_task_done", swarmId, taskId: task.id, status: "failed" });
-            return;
-        }
-
-        try {
-            const result = await subagentRegistry.wait(subId, task.timeoutMs ?? taskTimeout);
-            taskResults.push({
-                id: task.id, goal: task.goal,
-                status: "done", result,
-                durationMs: Date.now() - taskStart,
-            });
-            broadcast({ type: "swarm_task_done", swarmId, taskId: task.id, status: "done" });
-            log.debug(`Swarm task '${task.id}' completada en ${Date.now() - taskStart}ms`);
-        } catch (e: any) {
-            const isTimeout = e.message?.includes("timeout");
-            taskResults.push({
-                id: task.id, goal: task.goal,
-                status: isTimeout ? "timeout" : "failed",
-                error: e.message,
-                durationMs: Date.now() - taskStart,
-            });
-            broadcast({
-                type: "swarm_task_done", swarmId, taskId: task.id,
-                status: isTimeout ? "timeout" : "failed",
-            });
+    const results: Array<SwarmTaskResult | undefined> = new Array(tasks.length);
+    let cursor = 0;
+    const worker = async () => {
+        while (!signal.aborted && cursor < tasks.length) {
+            const index = cursor++;
+            const task = tasks[index];
+            const start = Date.now();
+            state.steps[index].state = "running";
+            broadcast({ type: "swarm_task_start", swarmId, taskId: task.id, step: index + 1 });
+            let id: string | undefined;
+            let outcome: SwarmTaskResult;
+            try {
+                id = subagentRegistry.spawn({
+                    goal: task.goal, context: task.context, swarmId,
+                    parentSessionId: options.sessionId ?? swarmId,
+                    timeoutMs: task.timeoutMs ?? options.taskTimeoutMs,
+                }, signal);
+                const settled = await subagentRegistry.wait(id, signal);
+                if (settled.status === "pending" || settled.status === "running") throw new Error("El subagente sigue activo.");
+                outcome = { id: task.id, goal: task.goal, status: settled.status, result: settled.result, error: settled.error, durationMs: Date.now() - start };
+            } catch (error) {
+                const settled = id ? subagentRegistry.get(id) : undefined;
+                const status = settled?.status;
+                const terminal = status && status !== "pending" && status !== "running" ? status : undefined;
+                const interrupted = signal.aborted ? abortOutcome(signal) : undefined;
+                outcome = {
+                    id: task.id, goal: task.goal,
+                    status: terminal ?? interrupted ?? "failed",
+                    result: settled?.result,
+                    error: terminal ? settled?.error : interrupted ? abortMessage(interrupted) : error instanceof Error ? error.message : String(error),
+                    durationMs: Date.now() - start,
+                };
+            }
+            results[index] = outcome;
+            Object.assign(state.steps[index], { state: outcome.status, error: outcome.error?.slice(0, 1000) });
+            broadcast({ type: "swarm_task_done", swarmId, taskId: task.id, step: index + 1, status: outcome.status, error: outcome.error?.slice(0, 1000) });
         }
     };
+    await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, () => worker()));
 
-    // Bounded concurrency loop + global swarm timeout guard
-    const swarmDeadline = Date.now() + swarmTimeout;
-
-    while ((pending.length > 0 || inFlight.size > 0) && Date.now() < swarmDeadline) {
-        // Fill up to concurrency limit
-        while (inFlight.size < concurrency && pending.length > 0) {
-            const task = pending.shift()!;
-            const p = runTask(task).then(() => { inFlight.delete(p); });
-            inFlight.add(p);
-        }
-
-        if (inFlight.size > 0) {
-            // Wait for any one to complete
-            await Promise.race(inFlight);
-        }
-    }
-
-    // If global timeout hit, mark remaining pending tasks as timeout
-    for (const remainingTask of pending) {
-        taskResults.push({
-            id: remainingTask.id, goal: remainingTask.goal,
-            status: "timeout", error: "Swarm global timeout exceeded",
-            durationMs: 0,
-        });
-    }
-
-    // ── Build result ──────────────────────────────────────────────────────────
-    const succeeded = taskResults.filter(r => r.status === "done").length;
-    const failed    = taskResults.filter(r => r.status !== "done").length;
+    const taskResults = tasks.map((task, index): SwarmTaskResult => {
+        const result = results[index];
+        if (result) return result;
+        const status = abortOutcome(signal);
+        const error = abortMessage(status);
+        Object.assign(state.steps[index], { state: status, error });
+        return { id: task.id, goal: task.goal, status, error, durationMs: 0 };
+    });
+    const succeeded = taskResults.filter(result => result.status === "done").length;
+    const failed = tasks.length - succeeded;
     const durationMs = Date.now() - startedAt;
-
-    const summary = _buildSummary(name, taskResults);
-
-    const swarmResult: SwarmResult = {
-        swarmId, name,
-        totalTasks: tasks.length,
-        succeeded, failed,
-        durationMs,
-        tasks: taskResults,
-        summary,
-    };
-
-    activeSwarms.set(swarmId, { ...swarmResult, startedAt, done: true });
-
-    broadcast({
-        type: "swarm_done",
-        swarmId, name,
-        succeeded, failed, durationMs,
-        summary: summary.slice(0, 500),
-    });
-
-    log.info(`Swarm '${name}' completado: ${succeeded}/${tasks.length} OK en ${(durationMs / 1000).toFixed(1)}s`);
-
-    return swarmResult;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function _buildSummary(swarmName: string, results: SwarmTaskResult[]): string {
-    const lines: string[] = [`# ${swarmName} — Resultados del Swarm\n`];
-
-    for (const r of results) {
-        const icon = r.status === "done" ? "✅" : r.status === "timeout" ? "⏱️" : "❌";
-        lines.push(`## ${icon} ${r.id} (${(r.durationMs / 1000).toFixed(1)}s)`);
-        if (r.result) {
-            // Take first 600 chars of result
-            lines.push(r.result.slice(0, 600));
-            if (r.result.length > 600) lines.push("*[truncado]*");
-        } else if (r.error) {
-            lines.push(`Error: ${r.error}`);
-        }
-        lines.push("");
-    }
-
-    return lines.join("\n");
+    const summary = [
+        `${name} · ${succeeded} de ${tasks.length} subtareas completadas`,
+        ...taskResults.map(result => `${result.id} [${result.status}]\n${(result.result || result.error || "").slice(0, 700)}`),
+    ].join("\n\n");
+    state.status = !failed ? "done" : signal.aborted ? abortOutcome(signal) : "failed";
+    state.summary = summary.slice(0, 1000);
+    broadcast({ type: "swarm_done", swarmId, name, succeeded, failed, durationMs, summary: state.summary, status: state.status, steps: state.steps });
+    return { swarmId, name, totalTasks: tasks.length, succeeded, failed, durationMs, tasks: taskResults, summary };
 }

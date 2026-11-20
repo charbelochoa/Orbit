@@ -101,6 +101,10 @@ export async function runInLane<T>(
     signal?: AbortSignal,
     toolName?: string,
 ): Promise<T> {
+    if (toolName === "run_swarm") {
+        signal?.throwIfAborted();
+        return work();
+    }
     const sessionLane = sessionLanes.get(sessionId) ?? new Semaphore(3);
     sessionLanes.set(sessionId, sessionLane);
     let releaseSession: Release | undefined;

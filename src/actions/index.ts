@@ -149,20 +149,21 @@ case "run_swarm": {
             sessionId:   args.sessionId,
             timeoutMs:   args.timeoutMs,
             concurrency: args.concurrency,
+            signal,
         });
         result = swarmResult.summary;
         break;
     }
     //  ── Spawn subagent (Phase 4.1) ────────────────────────────────
 case "spawn_subagent": {
-        const subId = await subagentRegistry.spawn({
+        const subId = subagentRegistry.spawn({
             goal:            args.goal || "",
             parentSessionId: args.parentSessionId || "main",
             toolProfile:     args.toolProfile,
             maxSteps:        args.maxSteps,
             timeoutMs:       args.timeoutMs,
             context:         args.context,
-        });
+        }, signal);
         result = `Subagente '${subId}' lanzado para: ${(args.goal || "").slice(0, 60)}`;
         break;
     }

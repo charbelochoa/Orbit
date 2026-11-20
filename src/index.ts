@@ -34,6 +34,8 @@ import { buildProjectContext } from "./context/project-facts.js";
 import { skillRegistry } from "./skills/registry.js";
 import { policyEngine } from "./core/tool-policy.js";
 import { getQueue } from "./agent/task-queue.js";
+import { subagentRegistry } from "./agent/subagent-registry.js";
+import { stopSwarms } from "./agent/swarm.js";
 import { fenceRecalledContext } from "./context/memory-fence.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -232,6 +234,8 @@ async function main() {
         log.info("Cerrando Orbit...");
         try {
             const suspended = queue?.stop();
+            stopSwarms();
+            subagentRegistry.stopAll();
             if (gateway) stopGateway(gateway);
             webServer?.close();
             ruleEngine.stop();
