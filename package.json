@@ -10,6 +10,7 @@
     "electron:dev": "npm run electron",
     "build": "tsc",
     "build:electron": "tsc && electron-builder",
+    "build:windows": "tsc && electron-builder --win nsis --x64",
     "pack": "tsc && electron-builder --dir",
     "start": "node dist/index.js",
     "cli": "tsx src/cli.ts",

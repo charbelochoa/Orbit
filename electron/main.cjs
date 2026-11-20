@@ -22,6 +22,8 @@ let contextPanelVisible = false;
 let webUrl = "";
 let gatewayPort = 0;
 let restartTimer;
+let restartDelay = 3000;
+let desktopReady = false;
 const startHidden = process.argv.includes("--background");
 
 function showMainWindow() {
@@ -89,19 +91,33 @@ function startBackend() {
       logStream.end();
       if (backend === child) backend = null;
       if (!started) reject(new Error("El agente terminó con código " + code + "."));
-      if (started && !isQuitting) restartTimer = setTimeout(restartBackend, 3000);
+      if (started && !isQuitting) scheduleRestart();
     });
   });
 }
 
 async function restartBackend() {
-  if (isQuitting) return;
+  if (isQuitting || backend) return;
   try {
     await startBackend();
-    if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(webUrl);
+    restartDelay = 3000;
+    tray?.setToolTip("Orbit AI");
+    if (desktopReady && mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(webUrl);
+    else await startDesktopUI();
   } catch (error) {
-    if (!isQuitting) showStartupError(error);
+    warn(error.message);
+    scheduleRestart();
   }
+}
+
+function scheduleRestart() {
+  if (isQuitting || restartTimer) return;
+  tray?.setToolTip("Orbit AI · reconectando");
+  restartTimer = setTimeout(() => {
+    restartTimer = undefined;
+    void restartBackend();
+  }, restartDelay);
+  restartDelay = Math.min(60_000, restartDelay * 2);
 }
 
 function showStartupError(error) {
@@ -129,7 +145,7 @@ async function openProviderSettings() {
 }
 
 ipcMain.handle("orbit:open-config", event => {
-  if (!event.senderFrame?.url?.startsWith(webUrl + "/")) throw new Error("Origen de Orbit inválido.");
+  requireOrbitWindow(event);
   return openProviderSettings();
 });
 
@@ -150,7 +166,7 @@ ipcMain.handle("orbit:save-provider", (event, input) => {
 });
 
 ipcMain.handle("orbit:select-workspace", async (event, defaultPath) => {
-  if (!event.senderFrame?.url?.startsWith(webUrl + "/")) throw new Error("Origen de Orbit inválido.");
+  requireOrbitWindow(event);
   const selection = await dialog.showOpenDialog(mainWindow, {
     title: "Elegir carpeta de trabajo",
     defaultPath: typeof defaultPath === "string" ? defaultPath : app.getPath("documents"),
@@ -172,16 +188,33 @@ function createTray() {
     icon = nativeImage.createFromDataURL(`data:image/png;base64,${FB}`);
   }
   tray = new Tray(icon);
-  const buildMenu = () => Menu.buildFromTemplate([
+  const loginOptions = { path: process.execPath, args: ["--background"] };
+  const menu = [
     { label: "Orbit AI", enabled: false },
     { type: "separator" },
     { label: "Mostrar Orbit", click: showMainWindow },
     { label: "Abrir en navegador", click: () => { if (webUrl) void shell.openExternal(webUrl); } },
-    { label: "Configurar proveedores", click: () => { void openProviderSettings().catch(showStartupError); } },
+    { label: "Abrir archivo .env", click: () => { void openProviderSettings().catch(showStartupError); } },
+    {
+      label: "Mascota flotante",
+      type: "checkbox",
+      checked: process.argv.includes("--mascot"),
+      click: item => {
+        if (!item.checked) overlayWindow?.hide();
+        else if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.showInactive();
+        else createOverlay();
+      },
+    },
+    ...(IS_PACKED && process.platform === "win32" ? [{
+      label: "Iniciar con Windows",
+      type: "checkbox",
+      checked: app.getLoginItemSettings(loginOptions).openAtLogin,
+      click: item => app.setLoginItemSettings({ ...loginOptions, openAtLogin: item.checked }),
+    }] : []),
     { type: "separator" },
     { label: "Salir", click: () => { isQuitting = true; app.quit(); } },
-  ]);
-  tray.setContextMenu(buildMenu());
+  ];
+  tray.setContextMenu(Menu.buildFromTemplate(menu));
   tray.setToolTip("Orbit AI");
   tray.setTitle("Orbit");
   tray.on("double-click", () => {
@@ -194,7 +227,14 @@ function createTray() {
 
 function sendToOverlay(channel, data) {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.webContents.send(channel, data);
+    const contents = overlayWindow.webContents;
+    if (contents.isLoading()) {
+      contents.once("did-finish-load", () => {
+        if (!contents.isDestroyed()) contents.send(channel, data);
+      });
+    } else {
+      contents.send(channel, data);
+    }
   }
 }
 
@@ -555,19 +595,29 @@ function hideAgentBusy() {
   hideAgentWidget();
 }
 
+async function startDesktopUI() {
+  if (process.argv.includes("--mascot") && !overlayWindow) createOverlay();
+  await createWindow();
+  connectGatewayBridge();
+  registerGlobalHotkeys();
+  desktopReady = true;
+}
+
 app.whenReady().then(async () => {
   if (!app.hasSingleInstanceLock()) return;
   app.setAppUserModelId("com.orbit.ai");
   createTray();
   try {
     await startBackend();
-    createOverlay();
-    await createWindow();
-    connectGatewayBridge();
-    registerGlobalHotkeys();
+    await startDesktopUI();
   } catch (error) {
-    showStartupError(error);
-    app.quit();
+    if (startHidden) {
+      warn(error.message);
+      scheduleRestart();
+    } else {
+      showStartupError(error);
+      app.quit();
+    }
   }
 });
 
@@ -576,9 +626,7 @@ app.on("activate", () => {
   else if (mainWindow) mainWindow.show();
 });
 
-app.on("window-all-closed", (e) => {
-  if (process.platform !== "darwin" && !isQuitting) e.preventDefault();
-});
+app.on("window-all-closed", () => {});
 
 app.on("before-quit", () => {
   log("Cerrando Orbit...");
@@ -587,7 +635,7 @@ app.on("before-quit", () => {
   globalShortcut.unregisterAll();
   if (gatewayWs) { try { gatewayWs.close(); } catch (_) {} gatewayWs = null; }
   if (backend) {
-    if (backend.connected) backend.send({ type: "orbit-stop" });
+    if (backend.connected) backend.send({ type: "orbit-stop" }, error => { if (error) backend?.kill(); });
     else backend.kill("SIGTERM");
     setTimeout(() => { if (backend) backend.kill("SIGKILL"); }, 2000);
   }
@@ -663,6 +711,8 @@ function registerGlobalHotkeys() {
     contextPanelVisible = !contextPanelVisible;
 
     if (contextPanelVisible) {
+      if (!overlayWindow || overlayWindow.isDestroyed()) createOverlay();
+      else overlayWindow.showInactive();
       const ctx = detectContext();
       log(`Contexto: app=${ctx.app}, titulo=${ctx.title.slice(0, 40)}, texto=${ctx.selectedText.length} chars`);
 

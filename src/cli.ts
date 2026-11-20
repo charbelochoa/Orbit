@@ -35,6 +35,7 @@ inicia su servidor local y configura OLLAMA_MODEL con un modelo instalado.
 
 Inicia con npm run electron para usar la bandeja, o npm start para usar el
 panel web. En otra terminal, ejecuta npm run cli -- chat.
+Usa npm run build:windows para generar el instalador en dist-installer.
 
 Rutas del servicio:
   Data dir: ${DATA_DIR}
