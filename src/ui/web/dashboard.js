@@ -218,9 +218,10 @@ function handle(msg){
     case 'typing':if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;
     case 'task_created':upsertTask(msg.id,{title:msg.goal});break;
     case 'task_started':upsertTask(msg.id,{status:'running'});break;
-    case 'task_plan':upsertTask(msg.taskId,{title:msg.goal,status:'running',steps:msg.steps||[]});break;
+    case 'task_plan':upsertTask(msg.taskId,{title:msg.goal,status:tasks[msg.taskId]?.status==='paused'?'paused':'running',steps:msg.steps||[]});break;
     case 'task_queued':upsertTask(msg.taskId,{title:msg.goal||tasks[msg.taskId]?.title||'Tarea en cola'});break;
     case 'task_progress':upsertTask(msg.taskId,{progress:msg.progress,status:tasks[msg.taskId]?.status||'running'});break;
+    case 'task_step_started':markTaskStep(msg.taskId,msg.step,'running');break;
     case 'task_step_done':markTaskStep(msg.taskId,msg.step,'done');break;
     case 'task_step_error':markTaskStep(msg.taskId,msg.step,'error',msg.error);break;
     case 'task_complete':upsertTask(msg.taskId,{status:msg.success?'done':'failed',summary:msg.summary});break;
@@ -229,6 +230,16 @@ function handle(msg){
     case 'task_cancelled':upsertTask(msg.taskId||msg.id,{status:'cancelled'});break;
     case 'task_paused':upsertTask(msg.id,{status:'paused'});break;
     case 'task_resumed':upsertTask(msg.id,{status:'running'});break;
+    case 'task_interrupted':upsertTask(msg.id,{status:'interrupted',summary:msg.error});break;
+    case 'task_requeued':upsertTask(msg.id,{status:'pending',summary:'',steps:msg.steps||[],progress:0});break;
+    case 'task_continue_ack':
+      if(msg.outcome==='needs_confirmation'&&window.confirm('Orbit desconoce el resultado de algunos pasos. Revisa sus efectos antes de reintentarlos. ¿Quieres repetirlos?')){
+        sendWs({type:'task_continue',payload:{id:msg.id,retryInterrupted:true}});
+      }else if(msg.outcome==='unavailable'){
+        setStatus('La tarea ya no está disponible para continuar.','warn');
+        sendWs({type:'status'});
+      }
+      break;
     case 'visual_loop_status':updateVisualBar(msg.status,msg.goal);break;
     case 'visual_loop_step':updateVisualBar('running',null,msg.loop,msg.maxLoops,msg.action);break;
     case 'memory':
@@ -244,7 +255,7 @@ function handle(msg){
         renderMemList();
       }else if(msg.key)updateMem(msg.key,msg.value,msg.ts);
       break;
-    case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(task=>upsertTask(task.id,{title:task.goal,status:task.status,summary:task.error||task.result,createdAt:task.createdAt}));if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
+    case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(syncTaskSnapshot);if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
     case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'command_result':addOrbitBubble(msg.text||msg.message||'OK');setSendMode(false);break;
     case 'command_error':addOrbitBubble('! '+(msg.text||msg.message||'Error'));setSendMode(false);break;
@@ -266,7 +277,7 @@ g('msg-input').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shi
 g('msg-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px';g('send-btn').disabled=!this.value.trim()&&!sendStreaming;updateCharCount();handleSlashInput(this.value);});
 function updateCharCount(){var len=g('msg-input').value.length,el=g('char-count');if(len>25000){el.textContent=len+'/32000';el.className=len>31000?'over':'warn';}else{el.textContent='';el.className='';}}
 
-var SLASH_COMMANDS=[{cmd:'/claude',desc:'Usa tu instalación de Claude Code'},{cmd:'/task',desc:'Ejecuta una tarea autónoma'},{cmd:'/stop',desc:'Detiene la generación actual'},{cmd:'/clear',desc:'Limpia el chat'},{cmd:'/memory',desc:'Muestra la memoria'},{cmd:'/model',desc:'Cambia el modelo de IA'},{cmd:'/status',desc:'Estado del sistema'},{cmd:'/skills',desc:'Lista de skills disponibles'},{cmd:'/cancel',desc:'Cancela una tarea activa'},{cmd:'/daemon',desc:'Modo daemon'},];
+var SLASH_COMMANDS=[{cmd:'/claude',desc:'Usa tu instalación de Claude Code'},{cmd:'/task',desc:'Ejecuta una tarea autónoma'},{cmd:'/stop',desc:'Detiene la generación actual'},{cmd:'/clear',desc:'Limpia el chat'},{cmd:'/memory',desc:'Muestra la memoria'},{cmd:'/model',desc:'Cambia el modelo de IA'},{cmd:'/status',desc:'Estado del sistema'},{cmd:'/skills',desc:'Lista de skills disponibles'},{cmd:'/cancel',desc:'Cancela una tarea activa'},{cmd:'/resume',desc:'Continúa una tarea interrumpida'},{cmd:'/daemon',desc:'Modo daemon'},];
 var slashMenuVisible=false,slashSelIndex=0,filteredCmds=[];
 function handleSlashInput(val){if(val.startsWith('/')&&!val.includes(' ')){var q=val.toLowerCase();filteredCmds=SLASH_COMMANDS.filter(function(c){return c.cmd.startsWith(q);});if(filteredCmds.length){slashSelIndex=0;renderSlashMenu();showSlashMenu();return;}}hideSlashMenu();}
 function renderSlashMenu(){var menu=g('slash-menu');menu.innerHTML=filteredCmds.map(function(c,i){return '<div class="slash-item'+(i===slashSelIndex?' selected':'')+'" data-idx="'+i+'"><span class="slash-cmd">'+esc(c.cmd)+'</span><span class="slash-desc">'+esc(c.desc)+'</span></div>';}).join('');menu.querySelectorAll('.slash-item').forEach(function(el){el.addEventListener('mousedown',function(e){e.preventDefault();slashSelIndex=+this.dataset.idx;applySlashSel();});});}
@@ -325,7 +336,13 @@ g('provider-select').addEventListener('change',function(){sendWs({type:'chat',pa
 function syncProviderSel(id){var sel=g('provider-select');if(sel)sel.value=id;var msel=g('model-select');if(msel)msel.value=id;}
 
 const tasks = Object.create(null);
-const taskLabels = { pending:'En cola', running:'En curso', paused:'Pausada', done:'Completada', failed:'Fallida', cancelled:'Cancelada' };
+const taskLabels = { pending:'En cola', running:'En curso', paused:'Pausada', interrupted:'Interrumpida', done:'Completada', failed:'Fallida', cancelled:'Cancelada' };
+
+function syncTaskSnapshot(task) {
+  const patch = {title:task.goal, status:task.status};
+  if (Array.isArray(task.steps)) Object.assign(patch, {steps:task.steps, summary:task.error||task.result, progress:0});
+  upsertTask(task.id, patch);
+}
 
 function upsertTask(id, patch) {
   if (typeof id !== 'string' || !id) return;
@@ -352,13 +369,19 @@ function renderTaskCard(task) {
     g('view-tasks').insertBefore(card, g('view-tasks').firstChild);
     empty.hidden = true;
   }
-  const progress = task.status === 'done' ? 100 : Math.min(100, Math.max(0, Number(task.progress) || 0));
+  const settled = task.steps.filter(step => step.state === 'done' || step.state === 'error').length;
+  const reported = Math.min(100, Math.max(0, Number(task.progress) || 0));
+  const progress = task.status === 'done' ? 100 : task.steps.length ? Math.round(100 * settled / task.steps.length) : reported;
   const steps = task.steps.map(step => {
-    const state = ['done','error'].includes(step.state) ? step.state : '';
+    const uncertain = task.status === 'interrupted' && step.state === 'running';
+    let state = ['done','error'].includes(step.state) ? step.state : '';
+    if (uncertain) state = 'uncertain';
+    else if (task.status === 'running' && step.state === 'running') state = 'active';
+    const note = uncertain ? 'Resultado por confirmar' : step.error;
     return '<li class="task-step '+state+'"><span class="task-step-dot"></span><span>'+
-      esc(step.description||step.tool||'Paso')+(step.error?'<small>'+esc(step.error)+'</small>':'')+'</span></li>';
+      esc(step.description||step.tool||'Paso')+(note?'<small>'+esc(note)+'</small>':'')+'</span></li>';
   }).join('');
-  const badge = task.status === 'failed' ? 'error' : ['running','paused','done'].includes(task.status) ? task.status : '';
+  const badge = task.status === 'failed' ? 'error' : ['running','paused','interrupted','done'].includes(task.status) ? task.status : '';
   card.innerHTML = '<div class="task-card-header"><span class="task-status-dot '+badge+'"></span><span class="task-title">'+
     esc(task.title)+'</span><span class="task-time">'+esc(taskLabels[task.status]||task.status)+'</span></div>'+
     '<progress class="task-progress" aria-label="Progreso" value="'+progress+'" max="100"></progress>'+
@@ -375,7 +398,8 @@ function renderTaskCard(task) {
   };
   if (task.status === 'running') addAction('Pausar', 'task_pause');
   if (task.status === 'paused') addAction('Reanudar', 'task_resume');
-  if (['pending','running','paused'].includes(task.status)) addAction('Cancelar', 'task_cancel');
+  if (task.status === 'interrupted') addAction('Continuar', 'task_continue');
+  if (['pending','running','paused','interrupted'].includes(task.status)) addAction('Cancelar', 'task_cancel');
   if (controls.childElementCount) card.appendChild(controls);
 }
 

@@ -119,6 +119,7 @@ button, input, textarea, select { font: inherit; }
 .task-summary { padding-top: 8px; color: var(--text-2); overflow-wrap: anywhere; }
 .task-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .task-step small { display: block; color: var(--text-3); }
+.task-status-dot.interrupted, .task-step.uncertain .task-step-dot { background: var(--warning); }
 #tasks-empty[hidden] { display: none; }
 #project-folder { max-width: 135px; overflow: hidden; text-overflow: ellipsis; }
 .settings-note { padding: 10px 12px; color: var(--text-3); font-size: 12px; }

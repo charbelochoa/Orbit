@@ -176,6 +176,7 @@ const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
   { cmd: "/status",  desc: "Estado del sistema" },
   { cmd: "/skills",  desc: "Lista de skills disponibles" },
   { cmd: "/cancel",  desc: "Cancela una tarea activa" },
+  { cmd: "/resume",  desc: "Continúa una tarea interrumpida" },
   { cmd: "/cost",    desc: "Tokens usados y costo de la sesión" },
   { cmd: "/compact", desc: "Resume la conversación para liberar contexto" },
   { cmd: "/diff",    desc: "Muestra git diff del proyecto" },
@@ -411,6 +412,7 @@ class OrbitCLI {
         let icon: string;
         switch (t.status) {
           case "running":   icon = `${C.warning}⠸${RESET}`; break;
+          case "interrupted": icon = `${C.warning}!${RESET}`; break;
           case "done":      icon = `${C.success}✓${RESET}`; break;
           case "failed":    icon = `${C.error}✗${RESET}`; break;
           case "cancelled": icon = `${C.dim}⊘${RESET}`; break;
@@ -645,14 +647,15 @@ class OrbitCLI {
         process.stdout.write(`\n${C.accent}${RESET} ${C.text}Tarea:${RESET} ${msg.goal || "Nueva tarea"}\n`);
         if (msg.steps) {
           for (const s of msg.steps) {
-            const name = typeof s === "string" ? s : s.name || s.tool || "Paso";
-            process.stdout.write(`  ${C.dim}→ ${name}${RESET}\n`);
+            const name = typeof s === "string" ? s : s.description || s.name || s.tool || "Paso";
+            const saved = s?.state === "done" ? " [guardado]" : s?.state === "error" ? " [fallido]" : "";
+            process.stdout.write(`  ${C.dim}→ ${name}${saved}${RESET}\n`);
           }
         }
         break;
 
       case "task_complete":
-        process.stdout.write(`\n${C.success}✓${RESET} ${C.text}Tarea completada${RESET}\n`);
+        process.stdout.write(`\n${C.text}${msg.success ? "Tarea completada" : "Tarea fallida"}${RESET}\n`);
         if (msg.summary) this.printOrbitMessage(msg.summary);
         this.showPrompt();
         break;
@@ -663,7 +666,14 @@ class OrbitCLI {
 
       case "task_step_error":
         process.stdout.write(`  ${C.error}✗${RESET} ${C.dim}${msg.step || "Paso"}${RESET}\n`);
-        if (msg.message) process.stdout.write(`    ${C.error}${msg.message}${RESET}\n`);
+        if (msg.error) process.stdout.write(`    ${C.error}${msg.error}${RESET}\n`);
+        break;
+
+      case "task_interrupted":
+      case "task_failed":
+        process.stdout.write(`\n${C.error}${msg.type === "task_interrupted" ? "Tarea interrumpida" : "Tarea fallida"}${RESET} ${msg.id}\n`);
+        if (msg.error) this.printOrbitMessage(msg.error);
+        this.showPrompt();
         break;
 
       case "memory":
