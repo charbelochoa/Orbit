@@ -10,6 +10,7 @@ import { OrbitToolError, getToolFailure } from "../core/orbit-error.js";
 import { IterationBudget } from "./iteration-budget.js";
 import { toolRegistry } from "../core/registry.js";
 import { summarizeTaskSteps, type TaskCheckpoint, type TaskStepState, type TaskStepResult } from "./task-checkpoint.js";
+import { currentProviderSelection } from "../providers/selection.js";
 
 interface StepResult extends TaskStepResult {
     stepId: number;
@@ -81,7 +82,8 @@ export class AgentExecutor {
             const settled = Object.values(checkpoint.states).filter(entry => entry?.state === "settled").length;
             broadcast({ type: "task_progress", taskId, progress: Math.round(100 * settled / steps.length) });
         };
-        broadcast({ type: "task_plan", taskId, goal, steps: summarizeTaskSteps(checkpoint) });
+        const selection = currentProviderSelection();
+        broadcast({ type: "task_plan", taskId, goal, steps: summarizeTaskSteps(checkpoint), provider: selection?.providerId, model: selection?.model });
         sendProgress();
 
         let aborted = false;

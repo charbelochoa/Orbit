@@ -296,7 +296,12 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 });
                 break;
             }
-            await runClientTurn(client, payload?.conversationId, context => chat({ ...context, text }), payload?.requestId);
+            const turnSelection = providerRegistry.captureSelection();
+            await runClientTurn(
+                client, payload?.conversationId,
+                context => withProviderSelection(turnSelection, () => chat({ ...context, text })),
+                payload?.requestId,
+            );
             break;
         }
 
@@ -341,6 +346,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 type: "status",
                 provider: provider.name,
                 providerId: provider.id,
+                model: provider.model,
                 workspace: workspaceRoot(),
                 gemini: providerRegistry.get("gemini")?.isAvailable() ?? false,
                 python: process.env.ORBIT_VISION_ENGINE === "1",

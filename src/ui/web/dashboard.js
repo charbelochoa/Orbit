@@ -216,9 +216,9 @@ function handle(msg){
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
     case 'tool_result':finalizeToolBlock(msg.tool,!msg.error,msg.result);finalizeToolEvent(msg.tool,!msg.error,msg.result);break;
     case 'typing':if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;
-    case 'task_created':upsertTask(msg.id,{title:msg.goal});break;
+    case 'task_created':upsertTask(msg.id,{title:msg.goal,provider:msg.provider,model:msg.model});break;
     case 'task_started':upsertTask(msg.id,{status:'running'});break;
-    case 'task_plan':upsertTask(msg.taskId,{title:msg.goal,status:tasks[msg.taskId]?.status==='paused'?'paused':'running',steps:msg.steps||[]});break;
+    case 'task_plan':upsertTask(msg.taskId,{title:msg.goal,status:tasks[msg.taskId]?.status==='paused'?'paused':'running',steps:msg.steps||[],provider:msg.provider,model:msg.model});break;
     case 'task_queued':upsertTask(msg.taskId,{title:msg.goal||tasks[msg.taskId]?.title||'Tarea en cola'});break;
     case 'task_progress':upsertTask(msg.taskId,{progress:msg.progress,status:tasks[msg.taskId]?.status||'running'});break;
     case 'task_step_started':markTaskStep(msg.taskId,msg.step,'running');break;
@@ -255,8 +255,8 @@ function handle(msg){
         renderMemList();
       }else if(msg.key)updateMem(msg.key,msg.value,msg.ts);
       break;
-    case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(syncTaskSnapshot);if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
-    case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
+    case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(syncTaskSnapshot);if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider)showProvider(msg.provider,msg.model);if(msg.providerId)syncProviderSel(msg.providerId);break;
+    case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';showProvider(pname,msg.model);if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'command_result':addOrbitBubble(msg.text||msg.message||'OK');setSendMode(false);break;
     case 'command_error':addOrbitBubble('! '+(msg.text||msg.message||'Error'));setSendMode(false);break;
     case 'permission_request':queuePermission(msg);break;
@@ -335,11 +335,17 @@ g('model-select').addEventListener('change',function(){sendWs({type:'chat',paylo
 g('provider-select').addEventListener('change',function(){sendWs({type:'chat',payload:{text:'/model '+this.value}});syncProviderSel(this.value);g('model-select').value=this.value;});
 function syncProviderSel(id){var sel=g('provider-select');if(sel)sel.value=id;var msel=g('model-select');if(msel)msel.value=id;}
 
+function showProvider(name, model) {
+  const label = g('tb-provider');
+  label.textContent = name;
+  label.title = [name, model].filter(Boolean).join(' · ');
+}
+
 const tasks = Object.create(null);
 const taskLabels = { pending:'En cola', running:'En curso', paused:'Pausada', interrupted:'Interrumpida', done:'Completada', failed:'Fallida', cancelled:'Cancelada' };
 
 function syncTaskSnapshot(task) {
-  const patch = {title:task.goal, status:task.status};
+  const patch = {title:task.goal, status:task.status, provider:task.provider, model:task.model};
   if (Array.isArray(task.steps)) Object.assign(patch, {steps:task.steps, summary:task.error||task.result, progress:0});
   upsertTask(task.id, patch);
 }
@@ -382,8 +388,10 @@ function renderTaskCard(task) {
       esc(step.description||step.tool||'Paso')+(note?'<small>'+esc(note)+'</small>':'')+'</span></li>';
   }).join('');
   const badge = task.status === 'failed' ? 'error' : ['running','paused','interrupted','done'].includes(task.status) ? task.status : '';
+  const preference = [task.provider, task.model].filter(Boolean).join(' · ');
   card.innerHTML = '<div class="task-card-header"><span class="task-status-dot '+badge+'"></span><span class="task-title">'+
     esc(task.title)+'</span><span class="task-time">'+esc(taskLabels[task.status]||task.status)+'</span></div>'+
+    (preference ? '<p class="task-model" aria-label="Modelo preferido">'+esc(preference)+'</p>' : '')+
     '<progress class="task-progress" aria-label="Progreso" value="'+progress+'" max="100"></progress>'+
     (steps ? '<ul class="task-steps">'+steps+'</ul>' : '')+
     (task.summary?'<p class="task-summary">'+esc(task.summary)+'</p>':'');

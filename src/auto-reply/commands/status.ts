@@ -25,6 +25,8 @@ export const statusCommand: CommandHandler = async (ctx) => {
             goal:     t.goal.slice(0, 60),
             status:   t.status,
             priority: t.priority,
+            provider: t.provider,
+            model:    t.model,
         })),
     });
 
@@ -38,6 +40,6 @@ export const statusCommand: CommandHandler = async (ctx) => {
         `🔧 Tools registradas: ${toolRegistry.count}`,
         `📚 Skills cargados:   ${skillRegistry.count}`,
         `📋 Tareas: ${pending} pendientes | ${running} activas | ${done} completadas | ${failed} fallidas`,
-        ...interrupted.map(task => `Interrumpida ${task.id} · ${task.goal}`),
+        ...interrupted.map(task => `Interrumpida ${task.id} · ${task.goal}${task.model ? ` · ${task.model}` : ""}`),
     ].join("\n");
 };
