@@ -36,6 +36,7 @@ interface Pending {
     req:     PermissionRequest;
     resolve: (answer: PermissionAnswer) => void;
     timer:   ReturnType<typeof setTimeout>;
+    cleanup: () => void;
 }
 
 const _pending = new Map<string, Pending>();
@@ -60,7 +61,9 @@ export function requestPermission(
     toolId:      string,
     args:        Record<string, any> = {},
     description: string = "",
+    signal?: AbortSignal,
 ): Promise<PermissionAnswer> {
+    if (signal?.aborted) return Promise.resolve("deny");
     const requestId = genRequestId();
 
     const req: PermissionRequest = {
@@ -74,16 +77,13 @@ export function requestPermission(
     log.info(`Permiso requerido: '${toolId}' [${requestId}]`);
 
     return new Promise<PermissionAnswer>((resolve) => {
-        // Auto-deny on timeout
         const timer = setTimeout(() => {
-            if (_pending.has(requestId)) {
-                _pending.delete(requestId);
-                log.warn(`Permiso para '${toolId}' expiró — denegado automáticamente`);
-                resolve("deny");
-            }
+            resolvePermission(requestId, "deny");
         }, TIMEOUT_MS);
-
-        _pending.set(requestId, { req, resolve, timer });
+        const abort = () => resolvePermission(requestId, "deny");
+        signal?.addEventListener("abort", abort, { once: true });
+        const cleanup = () => signal?.removeEventListener("abort", abort);
+        _pending.set(requestId, { req, resolve, timer, cleanup });
 
         // Broadcast to all connected clients
         broadcast({
@@ -107,6 +107,7 @@ export function resolvePermission(requestId: string, answer: PermissionAnswer): 
 
     clearTimeout(pending.timer);
     _pending.delete(requestId);
+    pending.cleanup();
 
     const { toolId } = pending.req;
     log.info(`Permiso para '${toolId}': ${answer}`);
@@ -122,6 +123,7 @@ export function resolvePermission(requestId: string, answer: PermissionAnswer): 
     }
 
     pending.resolve(answer);
+    broadcast({ type: "permission_closed", requestId });
     return true;
 }
 
@@ -134,9 +136,5 @@ export function getPendingRequests(): PermissionRequest[] {
 
 /** Cancel all pending requests (e.g. on shutdown) */
 export function cancelAllPending(): void {
-    for (const [id, pending] of _pending) {
-        clearTimeout(pending.timer);
-        pending.resolve("deny");
-        _pending.delete(id);
-    }
+    for (const id of _pending.keys()) resolvePermission(id, "deny");
 }

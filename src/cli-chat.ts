@@ -255,6 +255,7 @@ class OrbitCLI {
   private spinner = new Spinner();
   private model: string;
   private preferredProvider?: string;
+  private permissionRequests: Array<{ requestId: string; toolId: string; description?: string; args?: unknown }> = [];
   private conversationId = randomUUID();
   private taskSnapshot: Array<{ id: string; goal: string; status: string }> = [];
   private connected = false;
@@ -474,6 +475,7 @@ class OrbitCLI {
 
     this.ws.on("close", () => {
       this.connected = false;
+      this.permissionRequests = [];
       if (!this.shouldExit) {
         process.stdout.write(`\n${C.error}●${RESET} ${C.dim}Desconectado. Reconectando...${RESET}\n`);
         this.scheduleReconnect();
@@ -666,9 +668,18 @@ class OrbitCLI {
         }
         break;
 
-      case "confirm_action":
-        this.handleConfirm(msg);
+      case "permission_request":
+        this.permissionRequests.push(msg);
+        if (this.permissionRequests.length === 1) this.showPermission();
         break;
+
+      case "permission_closed": {
+        const index = this.permissionRequests.findIndex(request => request.requestId === msg.requestId);
+        if (index >= 0) this.permissionRequests.splice(index, 1);
+        if (index === 0 && this.permissionRequests.length) this.showPermission();
+        else if (index === 0) this.showPrompt();
+        break;
+      }
 
       case "error":
         this.spinner.stop();
@@ -735,6 +746,12 @@ class OrbitCLI {
 
   private handleInput(line: string) {
     const text = line.trim();
+    if (this.permissionRequests.length) {
+      const request = this.permissionRequests[0];
+      const answer = /^s(?:i|í)?$/i.test(text) ? "allow" : /^siempre$/i.test(text) ? "always" : "deny";
+      this.sendWs({ type: "permission_response", payload: { requestId: request.requestId, answer } });
+      return;
+    }
 
     if (!text) {
       this.showPrompt();
@@ -791,61 +808,13 @@ class OrbitCLI {
 
   // ─── Confirm dialog ─────────────────────────────────────────
 
-  private allowedActions = new Set<string>();
-  private deniedActions = new Set<string>();
 
-  private async handleConfirm(msg: any) {
+  private showPermission() {
     this.spinner.stop();
-    const action = msg.action || "Confirmar acción";
-    const desc = msg.description || msg.action || "";
-    const actionKey = msg.tool || msg.action || "";
-
-    // Auto-resolve if previously set to always allow/deny
-    if (actionKey && this.allowedActions.has(actionKey)) {
-      this.sendWs({ type: "confirm_response", confirmId: msg.confirmId, confirmed: true });
-      process.stdout.write(`  ${C.dim}↳ ${action} (auto-permitido)${RESET}\n`);
-      return;
-    }
-    if (actionKey && this.deniedActions.has(actionKey)) {
-      this.sendWs({ type: "confirm_response", confirmId: msg.confirmId, confirmed: false });
-      process.stdout.write(`  ${C.dim}↳ ${action} (auto-denegado)${RESET}\n`);
-      return;
-    }
-
-    process.stdout.write(`\n${C.warning}⚠${RESET}  ${BOLD}${action}${RESET}\n`);
-    if (desc && desc !== action) {
-      process.stdout.write(`   ${C.dim}${desc}${RESET}\n`);
-    }
-
-    // Use readline question for confirmation
-    if (this.rl) {
-      const answer = await new Promise<string>((resolve) => {
-        process.stdout.write(`   ${C.text2}¿Confirmar? ${C.dim}(s/N/a=siempre/d=denegar siempre)${RESET} `);
-        this.rl!.once("line", resolve);
-      });
-
-      const a = answer.trim().toLowerCase();
-      let confirmed = false;
-
-      if (a === "a" || a === "always") {
-        confirmed = true;
-        if (actionKey) this.allowedActions.add(actionKey);
-        process.stdout.write(`   ${C.success}✓ Siempre permitido: ${actionKey || action}${RESET}\n`);
-      } else if (a === "d" || a === "deny") {
-        confirmed = false;
-        if (actionKey) this.deniedActions.add(actionKey);
-        process.stdout.write(`   ${C.error}✗ Siempre denegado: ${actionKey || action}${RESET}\n`);
-      } else if (a === "s" || a === "si" || a === "y" || a === "yes") {
-        confirmed = true;
-        process.stdout.write(`   ${C.success}✓ Confirmado${RESET}\n`);
-      } else {
-        confirmed = false;
-        process.stdout.write(`   ${C.error}✗ Cancelado${RESET}\n`);
-      }
-
-      this.sendWs({ type: "confirm_response", confirmId: msg.confirmId, confirmed });
-      this.showPrompt();
-    }
+    const request = this.permissionRequests[0];
+    if (!request) return;
+    const args = JSON.stringify(request.args || {}, null, 2).slice(0, 1400);
+    process.stdout.write("\nPermiso para " + request.toolId + "\n" + (request.description || "") + "\n" + args + "\n¿Permitir? (s/N/siempre) ");
   }
 
   // ─── Cleanup ────────────────────────────────────────────────

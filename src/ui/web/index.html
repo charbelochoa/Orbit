@@ -252,10 +252,10 @@ function stopVoice(transmit) {
 
 <!-- CONFIRM -->
 <div id="confirm-overlay">
-  <div class="confirm-dialog">
-    <div id="cd-icon">!</div>
+  <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="cd-title" aria-describedby="cd-desc">
     <div id="cd-title">Confirmar acción</div>
     <div id="cd-desc"></div>
+    <pre id="cd-args"></pre>
     <div class="cd-actions">
       <button class="cd-btn" id="cd-cancel">Cancelar</button>
       <button class="cd-btn" id="cd-confirm">Confirmar</button>
@@ -556,7 +556,7 @@ function showThinking(visible,label){if(visible){if(thinkingEl)return;thinkingEl
 /* WS */
 var ws=null,reconnT=null,reconnCount=0;
 var IS_ELECTRON=!!(window.orbitElectron&&window.orbitElectron.isElectron);
-function connect(){clearTimeout(reconnT);try{ws=new WebSocket('ws://127.0.0.1:__ORBIT_GATEWAY_PORT__?token='+encodeURIComponent(window.__ORBIT_TOKEN||''));}catch(e){schedRecon();return;}ws.onopen=function(){reconnCount=0;setConn('online');setBadge('ws-badge','ok');sendWs({type:'status'});g('send-btn').disabled=!g('msg-input').value.trim();};ws.onclose=function(){stopVoice(false);orbitAudio.stopPlayback();setSendMode(false);setConn('offline');schedRecon();setBadge('ws-badge','err');};ws.onerror=function(){};ws.onmessage=function(e){try{handle(JSON.parse(e.data));}catch(_){};};}
+function connect(){clearTimeout(reconnT);try{ws=new WebSocket('ws://127.0.0.1:__ORBIT_GATEWAY_PORT__?token='+encodeURIComponent(window.__ORBIT_TOKEN||''));}catch(e){schedRecon();return;}ws.onopen=function(){reconnCount=0;setConn('online');setBadge('ws-badge','ok');sendWs({type:'status'});g('send-btn').disabled=!g('msg-input').value.trim();};ws.onclose=function(){permissionQueue.length=0;showNextPermission();stopVoice(false);orbitAudio.stopPlayback();setSendMode(false);setConn('offline');schedRecon();setBadge('ws-badge','err');};ws.onerror=function(){};ws.onmessage=function(e){try{handle(JSON.parse(e.data));}catch(_){};};}
 function schedRecon(){reconnCount++;var delay=Math.min(30000,1500*Math.pow(2,reconnCount-1));reconnT=setTimeout(connect,delay);}
 function sendWs(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}
 function setConn(s){var dot=g('tb-dot');dot.className='';if(s==='online'){dot.classList.add('online');setStatus('');}else if(s==='offline'){dot.classList.add('offline');setStatus('Desconectado. Reconectando...','warn');}else{setStatus('Conectando...');}}
@@ -592,7 +592,8 @@ function handle(msg){
     case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'command_result':addOrbitBubble(msg.text||msg.message||'OK');setSendMode(false);break;
     case 'command_error':addOrbitBubble('! '+(msg.text||msg.message||'Error'));setSendMode(false);break;
-    case 'confirm_action':showConfirm(msg.confirmId,msg.action,msg.description);break;
+    case 'permission_request':queuePermission(msg);break;
+    case 'permission_closed':removePermission(msg.requestId);break;
     case 'error':showThinking(false);setStatus('Error: '+(msg.message||''),'err');setSendMode(false);break;
     case 'chat_cleared':clearChatUI();break;
     case 'subagent_spawned':setStatus('Subagente iniciado: '+(msg.id||''));break;
@@ -709,11 +710,56 @@ function startWave(){var bars=document.querySelectorAll('#voice-wave .wave-bar')
 function stopWave(){clearInterval(waveIntv);document.querySelectorAll('#voice-wave .wave-bar').forEach(function(b){b.style.height='4px';});}
 
 /* CONFIRM */
-var cTimer=null,cId=null;
-function showConfirm(id,action,desc){cId=id;g('cd-title').textContent=action||'Confirmar acción';g('cd-desc').textContent=desc||action||'';g('confirm-overlay').classList.add('visible');var s=30;g('cd-timer').textContent='Se cierra en '+s+'s';clearInterval(cTimer);cTimer=setInterval(function(){s--;g('cd-timer').textContent='Se cierra en '+s+'s';if(s<=0)hideConfirm(false);},1000);}
-function hideConfirm(ok){clearInterval(cTimer);g('confirm-overlay').classList.remove('visible');if(cId!==null){sendWs({type:'confirm_response',confirmId:cId,confirmed:ok});cId=null;}}
-g('cd-confirm').addEventListener('click',function(){hideConfirm(true);});
-g('cd-cancel').addEventListener('click',function(){hideConfirm(false);});
+const permissionQueue = [];
+let priorFocus;
+
+function queuePermission(request) {
+  permissionQueue.push(request);
+  if (permissionQueue.length === 1) {
+    priorFocus = document.activeElement;
+    showNextPermission();
+  }
+}
+
+function showNextPermission() {
+  const request = permissionQueue[0];
+  g('confirm-overlay').classList.toggle('visible', Boolean(request));
+  g('app').inert = Boolean(request);
+  g('titlebar').inert = Boolean(request);
+  if (!request) {
+    priorFocus?.focus();
+    return;
+  }
+  g('cd-title').textContent = request.toolId || 'Confirmar acción';
+  g('cd-desc').textContent = request.description || '';
+  g('cd-args').textContent = JSON.stringify(request.args || {}, null, 2).slice(0, 1400);
+  g('cd-timer').textContent = 'Si no respondes, Orbit cancelará esta acción.';
+  g('cd-cancel').focus();
+}
+
+function removePermission(requestId) {
+  const index = permissionQueue.findIndex(request => request.requestId === requestId);
+  if (index < 0) return;
+  permissionQueue.splice(index, 1);
+  if (index === 0) showNextPermission();
+}
+
+function decidePermission(answer) {
+  const requestId = permissionQueue[0]?.requestId;
+  if (!requestId) return;
+  sendWs({ type:'permission_response', payload:{ requestId, answer } });
+  removePermission(requestId);
+}
+
+g('cd-confirm').addEventListener('click', () => decidePermission('allow'));
+g('cd-cancel').addEventListener('click', () => decidePermission('deny'));
+g('confirm-overlay').addEventListener('keydown', event => {
+  if (event.key === 'Escape') decidePermission('deny');
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    (document.activeElement === g('cd-confirm') ? g('cd-cancel') : g('cd-confirm')).focus();
+  }
+});
 
 /* TITLEBAR */
 g('tb-close').addEventListener('click',function(){if(IS_ELECTRON&&window.orbitElectron&&window.orbitElectron.send)window.orbitElectron.send('window:hide');else window.close();});

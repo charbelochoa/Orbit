@@ -3,7 +3,7 @@ import crypto from "crypto";
 import { loadMemory }    from "../memory/memory-manager.js";
 import { getQueue, TaskPriority } from "../agent/task-queue.js";
 import { isCommand, dispatchCommand } from "../auto-reply/index.js";
-import { resolvePermission, type PermissionAnswer } from "../core/permission-broker.js";
+import { resolvePermission } from "../core/permission-broker.js";
 import { loopRegistry } from "../agent/loop-registry.js";
 import { browserControl } from "../actions/browser-control.js";
 import { clearHistory } from "../memory/chat-history.js";
@@ -326,8 +326,9 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
         }
 
         case "permission_response": {
-            const requestId = payload?.requestId as string;
-            const answer    = (payload?.answer || "deny") as PermissionAnswer;
+            const requestId = payload?.requestId;
+            const answer = payload?.answer;
+            if (typeof requestId !== "string" || !["allow", "always", "deny"].includes(answer)) break;
             const ok = resolvePermission(requestId, answer);
             client.ws.send(JSON.stringify({ type: "permission_ack", requestId, ok }));
             break;
@@ -452,7 +453,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
 export function broadcast(msg: any) {
     const json = JSON.stringify(msg);
     clients.forEach(client => {
-        if (client.ws.readyState === WebSocket.OPEN) {
+        if (client.authenticated && client.ws.readyState === WebSocket.OPEN) {
             client.ws.send(json);
         }
     });

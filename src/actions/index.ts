@@ -37,6 +37,7 @@ import { OrbitToolError }          from "../core/orbit-error.js";
 import { VisualAgentLoop }         from "../agent/visual-loop.js";
 import { loopRegistry }            from "../agent/loop-registry.js";
 import { readOffice, writeOffice } from "./office-files.js";
+import { getConfig } from "../config/config.js";
 
 const log = createLogger("ToolRouter");
 
@@ -50,28 +51,31 @@ export async function executeTool(name: string, args: any, signal?: AbortSignal)
     // Phase 1: Tool validation
     if (!toolRegistry.has(name) && name !== "screen_process") {
         log.warn(`Tool desconocida: '${name}'`);
-        return `Tool '${name}' no esta implementada.`;
+        throw new OrbitToolError(name, "NOT_FOUND", `Herramienta no implementada: ${name}.`);
     }
 
     // Phase 1.3: Policy check
     const policy = policyEngine.evaluate(name, args);
     if (policy.action === "deny") {
         log.warn(`Tool '${name}' bloqueada: ${policy.reason}`);
-        return `Tool '${name}' no permitida: ${policy.reason || "politica de seguridad"}`;
+        throw new OrbitToolError(name, "PERMISSION_DENIED", policy.reason || "La política deniega esta herramienta.");
     }
 
     // Sprint 8: Interactive permission dialog for "ask" policy
-    if (policy.action === "ask") {
+    const tool = toolRegistry.get(name);
+    const requiresApproval = getConfig().security.approvalRequired &&
+        (tool?.capabilities.destructive || tool?.section === "comms");
+    if (policy.action === "ask" || (requiresApproval && !policy.explicit)) {
         const argsStr = Object.entries(args || {})
             .slice(0, 3)
             .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`)
             .join(", ");
         const desc = policy.reason || `La herramienta '${name}' quiere ejecutarse${argsStr ? ` con: ${argsStr}` : ""}.`;
-        const answer = await requestPermission(name, args || {}, desc);
+        const answer = await requestPermission(name, args || {}, desc, signal);
         signal?.throwIfAborted();
         if (answer === "deny") {
             log.info(`Permiso denegado por el usuario para '${name}'`);
-            return `El usuario denegó la ejecución de '${name}'.`;
+            throw new OrbitToolError(name, "PERMISSION_DENIED", `El usuario denegó la ejecución de '${name}'.`);
         }
         // answer=="allow" or "always": continue ("always" already persisted in broker)
     }

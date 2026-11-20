@@ -113,6 +113,19 @@ button, input, textarea, select { font: inherit; }
 .view:not(#view-chat) { overflow-y: auto; }
 .settings-note { padding: 10px 12px; color: var(--text-3); font-size: 12px; }
 #settings-edit-row[hidden] { display: none; }
+#cd-args {
+  max-height: 160px;
+  overflow: auto;
+  margin: 10px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-2);
+  font: 11px/1.4 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 @media (hover: hover) and (pointer: fine) {
   .welcome-prompt:hover { border-color: #647966; background: #222b23; }

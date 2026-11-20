@@ -220,12 +220,12 @@ class ToolPolicyEngine {
     /**
      * Evaluate access for a specific tool, optionally with arguments for wildcard matching.
      */
-    evaluate(toolId: string, args?: Record<string, any>): { action: PolicyAction; reason?: string } {
+    evaluate(toolId: string, args?: Record<string, any>): { action: PolicyAction; reason?: string; explicit?: boolean } {
         for (const layer of this.layers) {
             for (const rule of layer.rules) {
                 if (matchesWildcard(rule.toolId, toolId, args)) {
                     log.debug(`Policy "${layer.name}" -> ${toolId}: ${rule.action}`);
-                    return { action: rule.action, reason: rule.reason };
+                    return { action: rule.action, reason: rule.reason, explicit: true };
                 }
             }
         }
