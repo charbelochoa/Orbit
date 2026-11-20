@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { WebSocket } from "ws";
-import { getConfig } from "./config/config.js";
+import { resolveGatewayPort } from "./config/gateway-port.js";
 import { selectConversationId } from "./core/conversations.js";
 
 export async function runAsk(args: string[]): Promise<void> {
@@ -30,8 +30,7 @@ export async function runAsk(args: string[]): Promise<void> {
         throw new Error("Indica una solicitud en lenguaje natural de hasta 32 000 caracteres.");
     }
     const workspace = path.resolve(values.workspace || process.cwd());
-    const port = values.port ? Number(values.port) : getConfig().server.gatewayPort;
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Puerto del gateway inválido.");
+    const port = await resolveGatewayPort(values.port === undefined ? undefined : Number(values.port));
     const id = randomUUID();
     const conversationId = selectConversationId(workspace, values.conversation, values.session);
     const requestedWorkspace = values.conversation && !values.workspace ? undefined : workspace;

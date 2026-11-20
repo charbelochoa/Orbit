@@ -3,7 +3,7 @@
 const { safeStorage } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const { writeLocalJson } = require("./local-json.cjs");
 
 const providerNames = ["gemini", "openai", "anthropic", "ollama"];
 
@@ -70,15 +70,7 @@ function saveProvider(home, input) {
   settings.profiles[name] = profile;
   if (input.useByDefault) settings.defaultProvider = name;
 
-  const file = settingsPath(home);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = file + "." + randomUUID() + ".tmp";
-  try {
-    fs.writeFileSync(temporary, JSON.stringify(settings), { flag: "wx", mode: 0o600 });
-    fs.renameSync(temporary, file);
-  } finally {
-    try { fs.unlinkSync(temporary); } catch {}
-  }
+  writeLocalJson(settingsPath(home), settings);
   return publicSettings(home);
 }
 

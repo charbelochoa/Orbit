@@ -5,6 +5,7 @@ const { spawn, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const { publicSettings, saveProvider, providerEnvironment } = require("./provider-settings.cjs");
+const { writeLocalJson } = require("./local-json.cjs");
 
 const ROOT = path.join(__dirname, "..");
 const ICON_PATH = path.join(ROOT, "assets", "icon.png");
@@ -89,11 +90,18 @@ function startBackend() {
       child.kill();
     }, 30_000);
     child.on("message", message => {
-      if (message.type !== "orbit-ready") return;
+      if (message?.type !== "orbit-ready" || started || isQuitting || backend !== child) return;
       started = true;
       clearTimeout(timer);
       webUrl = "http://127.0.0.1:" + message.webPort;
       gatewayPort = message.gatewayPort;
+      try {
+        writeLocalJson(path.join(home, ".orbit", "desktop-runtime.json"), {
+          runtimeId: message.runtimeId, webPort: message.webPort, gatewayPort,
+        });
+      } catch (error) {
+        warn("No se pudo publicar el puerto para la terminal: " + error.message);
+      }
       resolve();
     });
     child.on("error", reject);

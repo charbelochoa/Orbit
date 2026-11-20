@@ -7,7 +7,7 @@ import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync } from "./mem
 import { getHistory, saveChatTurn } from "./memory/chat-history.js";
 import { workspaceRoot } from "./core/workspace.js";
 import { startGateway, stopGateway, broadcast, updateTokenUsage, onElectronConnected, type ChatTurn, type VoiceTurn } from "./gateway/server.js";
-import { startWebServer } from "./ui/web-server.js";
+import { desktopRuntimeId, startWebServer } from "./ui/web-server.js";
 import { toolRegistry } from "./core/registry.js";
 import { getSystemPrompt } from "./core/prompt.js";
 import { getToolFailure } from "./core/orbit-error.js";
@@ -349,7 +349,7 @@ async function main() {
     await proactiveService.start();
     if (closing) return;
     queue.start();
-    if (process.connected) process.send?.({ type: "orbit-ready", ...config.server });
+    if (process.connected) process.send?.({ type: "orbit-ready", runtimeId: desktopRuntimeId, ...config.server });
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));
     if (process.env.ORBIT_VISION_ENGINE === "1") startPythonEngine();

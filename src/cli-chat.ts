@@ -18,6 +18,7 @@ import { fileURLToPath } from "url";
 import { selectConversationId } from "./core/conversations.js";
 import { parseArgs } from "node:util";
 import { getConfig } from "./config/config.js";
+import { resolveGatewayPort } from "./config/gateway-port.js";
 import { runHooks, initHooks } from "./hooks/runner.js";
 import { ORBIT_MASCOT } from "./core/mascot.js";
 
@@ -274,7 +275,7 @@ class OrbitCLI {
   private connected = false;
   private streaming = false;
   private streamBuf = "";
-  private wsPort: number;
+  private readonly wsPort?: number;
   private compactMode: boolean;
   private noLogo: boolean;
   private toolStartTimes = new Map<string, number>();
@@ -300,7 +301,7 @@ class OrbitCLI {
     this.preferredProvider = opts.provider;
     this.preferredModel = opts.modelName;
     this.model = opts.modelName || opts.provider || getConfig().defaultProvider;
-    this.wsPort = opts.wsPort || getConfig().server.gatewayPort;
+    this.wsPort = opts.wsPort;
     this.compactMode = opts.compact || false;
     this.noLogo = opts.noLogo || false;
     this.workspace = path.resolve(opts.workspace || process.cwd());
@@ -322,7 +323,7 @@ class OrbitCLI {
     }
 
     // Connect to WebSocket gateway
-    this.connect();
+    void this.connect();
 
     // Setup readline with tab-completion
     this.rl = createInterface({
@@ -471,9 +472,11 @@ class OrbitCLI {
 
   // ─── WebSocket ──────────────────────────────────────────────
 
-  private connect() {
+  private async connect() {
     try {
-      this.ws = new WebSocket(`ws://127.0.0.1:${this.wsPort}`);
+      const port = await resolveGatewayPort(this.wsPort);
+      if (this.shouldExit) return;
+      this.ws = new WebSocket(`ws://127.0.0.1:${port}`, { handshakeTimeout: 5000 });
     } catch {
       this.scheduleReconnect();
       return;
@@ -522,7 +525,7 @@ class OrbitCLI {
     if (this.shouldExit) return;
     this.reconnAttempts++;
     const delay = Math.min(30000, 1500 * Math.pow(2, this.reconnAttempts - 1));
-    setTimeout(() => this.connect(), delay);
+    setTimeout(() => { if (!this.shouldExit) void this.connect(); }, delay);
   }
 
   private sendWs(obj: any) {

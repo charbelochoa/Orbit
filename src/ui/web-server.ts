@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { PROJECT_ROOT } from "../config/paths.js";
@@ -6,6 +7,7 @@ import { getSessionToken } from "../gateway/server.js";
 import { ORBIT_MASCOT } from "../core/mascot.js";
 
 const WEB_DIR = path.join(PROJECT_ROOT, "src", "ui", "web");
+export const desktopRuntimeId = randomUUID();
 const VENDOR_FILES = new Map([
     ["/vendor/marked.js", path.join(PROJECT_ROOT, "node_modules", "marked", "lib", "marked.umd.js")],
     ["/vendor/purify.js", path.join(PROJECT_ROOT, "node_modules", "dompurify", "dist", "purify.min.js")],
@@ -48,7 +50,7 @@ export async function startWebServer(port: number, gatewayPort: number) {
         const pathname = (req.url || "/").split("?")[0];
         if (pathname === "/health") {
             res.writeHead(200, { ...headers, "Content-Type": "application/json" });
-            res.end(JSON.stringify({ service: "orbit", status: "ok" }));
+            res.end(JSON.stringify({ service: "orbit", status: "ok", runtimeId: desktopRuntimeId, gatewayPort }));
             return;
         }
         if (pathname === "/session" && req.method === "GET") {
