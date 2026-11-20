@@ -234,7 +234,8 @@ export const orbitConfigSchema = z.object({
         maxReplans:   z.number().default(3),
         /** Maximum loops for the visual agent loop (Phase 2) */
         maxVisualLoops: z.number().default(25),
-    }).default(() => ({ maxPlanSteps: 30, maxReplans: 3, maxVisualLoops: 25 })),
+        maxChatSteps: z.number().int().min(1).max(40).default(12),
+    }).default(() => ({ maxPlanSteps: 30, maxReplans: 3, maxVisualLoops: 25, maxChatSteps: 12 })),
 });
 
 export type OrbitConfig = z.infer<typeof orbitConfigSchema>;

@@ -6,6 +6,7 @@ import { isCommand, dispatchCommand } from "../auto-reply/index.js";
 import { resolvePermission, type PermissionAnswer } from "../core/permission-broker.js";
 import { loopRegistry } from "../agent/loop-registry.js";
 import { browserControl } from "../actions/browser-control.js";
+import { clearHistory } from "../memory/chat-history.js";
 
 const PORT = 18789;
 
@@ -30,9 +31,19 @@ interface Client {
     ws: WebSocket;
     connectedAt: Date;
     authenticated: boolean;
+    turn?: AbortController;
     // Rate limiting: message timestamps in rolling window
     msgTimestamps: number[];
 }
+
+export interface ChatTurn {
+    text: string;
+    sessionId: string;
+    signal: AbortSignal;
+    send: (message: Record<string, unknown>) => void;
+}
+
+type ChatHandler = (turn: ChatTurn) => Promise<void>;
 
 const clients = new Map<string, Client>();
 
@@ -106,8 +117,8 @@ function isRateLimited(client: Client): boolean {
     return false;
 }
 
-export function startGateway(speakFn?: (text: string) => void) {
-    const wss = new WebSocketServer({ port: PORT });
+export function startGateway(speakFn: (text: string) => void, chat: ChatHandler) {
+    const wss = new WebSocketServer({ port: PORT, host: "127.0.0.1", maxPayload: 4 * 1024 * 1024 });
 
     wss.on("listening", () => {
         console.log(`[Gateway] WebSocket Gateway escuchando en ws://localhost:${PORT}`);
@@ -122,7 +133,7 @@ export function startGateway(speakFn?: (text: string) => void) {
             return;
         }
 
-        const id = `client_${Date.now()}`;
+        const id = crypto.randomUUID();
 
         // Check for auth token in URL query: ws://localhost:18789?token=<SESSION_TOKEN>
         const url = new URL(req.url || "/", `http://localhost:${PORT}`);
@@ -166,14 +177,16 @@ export function startGateway(speakFn?: (text: string) => void) {
                     return;
                 }
 
-                await handleClientMessage(id, msg, speakFn);
+                await handleClientMessage(id, msg, speakFn, chat);
             } catch (e: any) {
                 ws.send(JSON.stringify({ type: "error", message: `JSON invalido: ${e.message}` }));
             }
         });
 
         ws.on("close", () => {
+            clients.get(id)?.turn?.abort();
             clients.delete(id);
+            _taskTimestamps.delete(id);
             console.log(`[Gateway] Cliente desconectado: ${id}`);
         });
 
@@ -183,7 +196,7 @@ export function startGateway(speakFn?: (text: string) => void) {
     });
 }
 
-async function handleClientMessage(clientId: string, msg: any, speakFn?: (text: string) => void) {
+async function handleClientMessage(clientId: string, msg: any, speakFn: (text: string) => void, chat: ChatHandler) {
     const client = clients.get(clientId);
     if (!client) return;
     const { type, payload } = msg;
@@ -195,14 +208,38 @@ async function handleClientMessage(clientId: string, msg: any, speakFn?: (text: 
             break;
 
         case "chat": {
-            const text = payload?.text || "";
-            broadcast({ type: "user_message", text });
-            // Phase 6: route /commands to the dispatcher; plain text goes to Gemini
+            const text = typeof payload?.text === "string" ? payload.text.trim() : "";
+            const send = (message: Record<string, unknown>) => {
+                if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(message));
+            };
+            const conversationId = typeof payload?.conversationId === "string" && /^[\w-]{1,100}$/.test(payload.conversationId)
+                ? payload.conversationId
+                : clientId;
+            const sessionId = `chat:${conversationId}`;
+            if (text.toLowerCase() === "/stop") {
+                if (client.turn) client.turn.abort();
+                else send({ type: "turn_complete" });
+                break;
+            }
+            if (!text || text.length > 32_000) {
+                send({ type: "error", message: "Escribe un mensaje de hasta 32 000 caracteres." });
+                send({ type: "turn_complete" });
+                break;
+            }
             if (isCommand(text)) {
+                if (text.toLowerCase() === "/clear") clearHistory(sessionId);
                 await dispatchCommand(text, clientId, client.ws, speakFn);
-            } else if (speakFn) {
-                // speak is async — fire and let it resolve (handles its own errors)
-                Promise.resolve(speakFn(text)).catch(() => {});
+                break;
+            }
+            if (client.turn) {
+                send({ type: "error", message: "Ya hay un turno en curso." });
+                break;
+            }
+            client.turn = new AbortController();
+            try {
+                await chat({ text, sessionId, signal: client.turn.signal, send });
+            } finally {
+                client.turn = undefined;
             }
             break;
         }

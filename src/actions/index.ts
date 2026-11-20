@@ -45,7 +45,8 @@ const log = createLogger("ToolRouter");
  * Phase 1: validates tool existence + policy before dispatch.
  * Phase 6: PreToolUse / PostToolUse lifecycle hooks.
  */
-export async function executeTool(name: string, args: any): Promise<string> {
+export async function executeTool(name: string, args: any, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     // Phase 1: Tool validation
     if (!toolRegistry.has(name) && name !== "screen_process") {
         log.warn(`Tool desconocida: '${name}'`);
@@ -53,7 +54,7 @@ export async function executeTool(name: string, args: any): Promise<string> {
     }
 
     // Phase 1.3: Policy check
-    const policy = policyEngine.evaluate(name);
+    const policy = policyEngine.evaluate(name, args);
     if (policy.action === "deny") {
         log.warn(`Tool '${name}' bloqueada: ${policy.reason}`);
         return `Tool '${name}' no permitida: ${policy.reason || "politica de seguridad"}`;
@@ -67,6 +68,7 @@ export async function executeTool(name: string, args: any): Promise<string> {
             .join(", ");
         const desc = policy.reason || `La herramienta '${name}' quiere ejecutarse${argsStr ? ` con: ${argsStr}` : ""}.`;
         const answer = await requestPermission(name, args || {}, desc);
+        signal?.throwIfAborted();
         if (answer === "deny") {
             log.info(`Permiso denegado por el usuario para '${name}'`);
             return `El usuario denegó la ejecución de '${name}'.`;
@@ -88,6 +90,7 @@ export async function executeTool(name: string, args: any): Promise<string> {
         return `Tool '${name}' bloqueada por hook PreToolUse: ${preHook.reason}`;
     }
 
+    signal?.throwIfAborted();
     log.info(name, args);
     let result: string;
     try { switch (name) { 

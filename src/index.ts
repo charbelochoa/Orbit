@@ -7,8 +7,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync, startMemoryAutoSave } from "./memory/memory-manager.js";
-import { addMessage } from "./memory/chat-history.js";
-import { startGateway, broadcast, setTypingState, updateTokenUsage, resetTokenUsage, getSessionToken, onElectronConnected } from "./gateway/server.js";
+import { addMessage, getHistory } from "./memory/chat-history.js";
+import { startGateway, broadcast, setTypingState, updateTokenUsage, onElectronConnected, type ChatTurn } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
 import { getQueue, TaskPriority } from "./agent/task-queue.js";
 import { TOOL_DECLARATIONS } from "./core/tool-registry.js";
@@ -31,6 +31,9 @@ import { notificationService, setElectronConnected } from "./notifications/servi
 import { wakeWordMonitor }  from "./notifications/wake-word.js";
 import { codebaseIndexer }  from "./codebase/indexer.js";
 import { errorWatcher }     from "./codebase/error-watcher.js";
+import { runHarnessTurn } from "./agent/text-harness.js";
+import { runInLane } from "./agent/lanes.js";
+import type { ChatMessage } from "./providers/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = createLogger("Orbit");
@@ -108,61 +111,60 @@ function startPythonEngine() {
     }
 }
 
-// Speak (send text to Gemini Live, fallback to text provider)
-async function speak(text: string) {
-    // If Gemini Live session is ready, use it (audio mode)
-    if (geminiSession && isGeminiReady) {
-        try {
-            geminiSession.sendClientContent({
-                turns: [{ role: "user", parts: [{ text }] }],
-                turnComplete: true
-            });
-            return;
-        } catch (e: any) {
-            log.warn("Error al enviar por Gemini Live:", e.message);
-            // Fall through to text fallback
-        }
-    }
+function announce(text: string) {
+    broadcast({ type: "orbit_message", text });
+}
 
-    // Text fallback using provider registry
-    log.info("Gemini Live no disponible — usando fallback de texto");
-    setTypingState("thinking");
+async function chat({ text, sessionId, send, signal }: ChatTurn) {
+    send({ type: "typing", state: "thinking" });
     try {
-        const mem = await loadMemory();
-        const memStr = formatMemoryForPrompt(mem);
-        const now = new Date().toLocaleString("es-MX", {
-            weekday: "long", year: "numeric", month: "long",
-            day: "numeric", hour: "2-digit", minute: "2-digit"
+        const history = getHistory(sessionId, 24).flatMap<ChatMessage>(({ role, content }) =>
+            role === "user" || role === "assistant" ? [{ role, content: content.slice(0, 8000) }] : [],
+        );
+        const memory = formatMemoryForPrompt(await loadMemory());
+        const deadline = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
+        const reply = await runHarnessTurn({
+            systemPrompt: getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX")),
+            messages: [...history, { role: "user", content: text }],
+            tools: toolRegistry.getByProfile(getConfig().toolProfile),
+            maxIterations: getConfig().agent.maxChatSteps,
+            signal: deadline,
+            generate: params => providerRegistry.generateText({
+                ...params,
+                signal: AbortSignal.any([deadline, AbortSignal.timeout(45_000)]),
+            }),
+            execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline)),
+            onTool: (name, result) => {
+                if (result === undefined) {
+                    send({ type: "tool_call", tool: name, args: {} });
+                    send({ type: "typing", state: "executing", tool: name });
+                } else {
+                    send({ type: "tool_result", tool: name, result: result.slice(0, 1500) });
+                    send({ type: "typing", state: "thinking" });
+                }
+            },
+            onUsage: updateTokenUsage,
         });
-        const systemPrompt = getSystemPrompt(memStr, now);
-        const result = await providerRegistry.generateText({
-            systemPrompt,
-            messages: [{ role: "user", content: text }],
-        });
-        const reply = result.text || "No pude generar una respuesta.";
-        addMessage(SESSION_ID, "user", text);
-        addMessage(SESSION_ID, "assistant", reply);
-        broadcast({ type: "orbit_message", text: reply });
-        broadcast({ type: "turn_complete" });
-        if (result.usage) {
-            updateTokenUsage(result.usage.inputTokens ?? 0, result.usage.outputTokens ?? 0);
+        addMessage(sessionId, "user", text);
+        addMessage(sessionId, "assistant", reply);
+        send({ type: "orbit_message", text: reply });
+    } catch (error) {
+        if (signal.aborted) {
+            send({ type: "orbit_message", text: "Turno cancelado." });
+        } else {
+            log.warn("Turno de texto fallido:", error instanceof Error ? error.message : String(error));
+            send({ type: "orbit_message", text: "Orbit no pudo terminar el turno. Revisa el proveedor y el registro local." });
         }
-    } catch (e: any) {
-        log.error("Fallback de texto falló:", e.message);
-        broadcast({ type: "orbit_message", text: "⚠️ No pude conectar con ningún proveedor de IA. Verifica tu API key en .env" });
-        broadcast({ type: "turn_complete" });
     } finally {
-        setTypingState("idle");
+        send({ type: "turn_complete" });
+        send({ type: "typing", state: "idle" });
     }
 }
 
 // Connect to Gemini Live API (via SDK)
 async function connectGemini() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey === "TU_API_KEY_AQUI") {
-        log.error("GEMINI_API_KEY no configurada. Edita .env o config/orbit.yaml");
-        process.exit(1);
-    }
+    const apiKey = getConfig().providers.gemini.apiKey;
+    if (!apiKey || apiKey === "TU_API_KEY_AQUI") return;
     const ai = new GoogleGenAI({ apiKey });
     try {
         const mem = await loadMemory();
@@ -249,7 +251,7 @@ async function connectGemini() {
                                     : call.args?.priority === "low"
                                         ? TaskPriority.LOW
                                         : TaskPriority.NORMAL;
-                                const taskId = getQueue().submit(goal, priority, speak);
+                                const taskId = getQueue().submit(goal, priority, announce);
                                 responses.push({
                                     id: call.id,
                                     name: call.name,
@@ -351,9 +353,8 @@ async function main() {
     startMemoryAutoSave();
 
     // Start gateway FIRST so it's ready when web UI connects
-    startGateway(speak);
+    startGateway(announce, chat);
     await startWebServer(config.server.webPort);
-    console.log(`[Gateway] Session token: ${getSessionToken()}`);
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));
     startPythonEngine();
