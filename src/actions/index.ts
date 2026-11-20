@@ -107,7 +107,7 @@ case "computer_settings": result = await computerSettings(args); break;
     //  ── Open applications ─────────────────────────────────────────
 case "open_app": result = await openApp(args); break;
     //  ── Shell / System commands ───────────────────────────────────
-case "cmd_control": result = await cmdControl(args); break;
+case "cmd_control": result = await cmdControl(args, signal); break;
     //  ── File system ───────────────────────────────────────────────
 case "file_controller": result = await fileController(args); break;
     //  ── Screen vision (Gemini multimodal screenshot analysis) ─────
@@ -204,10 +204,14 @@ case "visual_task": {
         const loopId = `vl_${Date.now()}`;
         const loop = new VisualAgentLoop();
         loopRegistry.register(loopId, loop);
+        const stop = () => loop.stop();
+        signal?.addEventListener("abort", stop, { once: true });
         try {
+            signal?.throwIfAborted();
             const loopResult = await loop.run(goal, { maxLoops: args?.maxLoops });
             result = `[${loopResult.status}] (${loopResult.totalLoops} pasos, ${Math.round(loopResult.elapsedMs / 1000)}s) ${loopResult.summary}`;
         } finally {
+            signal?.removeEventListener("abort", stop);
             loopRegistry.unregister(loopId);
         }
         break;

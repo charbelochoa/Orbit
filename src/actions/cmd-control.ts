@@ -1,11 +1,10 @@
-import { exec, spawn } from "child_process";
-import { promisify } from "util";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import os from "os";
 import { EventEmitter } from "events";
 import { normalizePath, getShellCommand, isElevated } from "../core/path-utils.js";
 import { workspaceRoot } from "../core/workspace.js";
-
-const execAsync = promisify(exec);
+import { boundToolResult } from "../context/text-budget.js";
+import { OrbitToolError } from "../core/orbit-error.js";
 
 // ── Background process tracker ───────────────────────────────
 export const cmdEvents = new EventEmitter();
@@ -72,103 +71,100 @@ export interface CmdControlParams {
     run_in_background?: boolean;
 }
 
-export async function cmdControl(parameters: any): Promise<string> {
-    const p = parameters as CmdControlParams;
-    const task = p?.task || "";
-    const command = p?.command || "";
-
-    if (!task && !command) {
-        return "Se necesita una 'task' o 'command' para ejecutar.";
+export async function cmdControl(p: CmdControlParams, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    const command = typeof p?.command === "string" ? p.command : "";
+    const task = typeof p?.task === "string" ? p.task : "";
+    const text = command || task;
+    if (!text.trim()) throw new OrbitToolError("cmd_control", "INVALID_PARAMS", "Indica un comando.");
+    if (!isSafeCommand(text)) {
+        throw new OrbitToolError("cmd_control", "PERMISSION_DENIED", "El comando contiene una operación bloqueada.");
     }
 
-    const cmdToCheck = command || task;
-    if (!isSafeCommand(cmdToCheck)) {
-        console.warn(`[CMD Control] Comando bloqueado por seguridad: ${cmdToCheck.slice(0, 100)}`);
-        return "Comando bloqueado: operación potencialmente peligrosa no permitida.";
+    const cwd = normalizePath(p.cwd || workspaceRoot());
+    const timeout = typeof p.timeout_ms === "number" && Number.isFinite(p.timeout_ms)
+        ? Math.min(Math.max(p.timeout_ms, 1000), 120_000)
+        : 30_000;
+    if (/schtasks|netsh|sc\s+(config|start|stop)|reg\s/i.test(text) && !isElevated()) {
+        console.warn("[CMD Control] El comando puede requerir permisos de administrador.");
     }
+    const options: SpawnOptions = { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true };
+    const child = command
+        ? spawn(command, { ...options, shell: true })
+        : spawn(getShellCommand(), process.platform === "win32" ? ["-NoProfile", "-NonInteractive", "-Command", task] : ["-c", task], options);
+    const handle = observeProcess(child, redactCmd(text).slice(0, 100), Boolean(p.run_in_background));
+    if (p.run_in_background) return handle.started;
 
-    const cwd = normalizePath(p?.cwd || workspaceRoot());
-    const timeoutMs = Math.min(Math.max(p?.timeout_ms || 30000, 1000), 120000);
-    const shell = getShellCommand();
-    const cmdToRun = command || `${shell} -NoProfile -Command "${task}"`;
-
-    // Phase 8.3: Warn if command needs elevation
-    if (/schtasks|netsh|sc\s+(config|start|stop)|reg\s/i.test(cmdToCheck) && !isElevated()) {
-        console.warn("[CMD Control] Comando puede requerir permisos de administrador.");
-    }
-
-    console.log(`[CMD Control] Ejecutando:`, redactCmd(cmdToRun), `(timeout: ${timeoutMs}ms, bg: ${!!p?.run_in_background})`);
-
-    // ── Background mode ──────────────────────────────────────
-    if (p?.run_in_background) {
-        return runBackground(cmdToRun, cwd);
-    }
-
-    // ── Foreground with timeout ──────────────────────────────
+    let timeoutReached = false;
+    const threshold = setTimeout(() => {
+        timeoutReached = true;
+        stopProcess(child);
+    }, timeout);
+    const abort = () => stopProcess(child);
+    signal?.addEventListener("abort", abort, { once: true });
     try {
-        const { stdout, stderr } = await execAsync(cmdToRun, { cwd, timeout: timeoutMs });
-        let output = stdout.trim();
-        const error = stderr.trim();
-
-        if (output && output.length > 5000) {
-            output = output.slice(0, 5000) + "\n...[TRUNCADO]";
+        const result = await handle.finished;
+        signal?.throwIfAborted();
+        if (timeoutReached) throw new OrbitToolError("cmd_control", "TIMEOUT", "Se agotó el tiempo del comando.");
+        const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+        if (result.code !== 0) {
+            throw new OrbitToolError("cmd_control", "TOOL_FAILED", output || "El comando terminó con código " + result.code + ".");
         }
-        if (error) {
-            console.warn(`[CMD Control] stderr: ${error.slice(0, 200)}`);
-            if (!output) return `Error ejecutando comando: ${error.slice(0, 2000)}`;
-        }
-        return output || "Comando ejecutado exitosamente sin salida de texto.";
-    } catch (e: any) {
-        if (e.killed) {
-            return `Comando cancelado: excedió el timeout de ${timeoutMs / 1000}s.`;
-        }
-        console.error(`[CMD Control] Error:`, e.message);
-        return `Comando falló: ${e.message}`;
+        return output || "Comando completado.";
+    } finally {
+        clearTimeout(threshold);
+        signal?.removeEventListener("abort", abort);
     }
 }
 
-// ── Background process launcher ──────────────────────────────
-
 let bgCounter = 0;
 
-function runBackground(cmdToRun: string, cwd: string): string {
-    const id = `bg-${++bgCounter}`;
-    const child = spawn(cmdToRun, {
-        shell: true,
-        cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
+function observeProcess(child: ChildProcess, label: string, background: boolean) {
+    const id = background ? "bg-" + (++bgCounter) : "";
+    const started = new Promise<string>((resolve, reject) => {
+        child.once("spawn", () => {
+            if (background) {
+                const pid = child.pid ?? 0;
+                backgroundProcesses.set(id, { pid, label, startedAt: Date.now() });
+                resolve("Proceso en segundo plano " + id + " (PID " + pid + ").");
+            } else resolve("");
+        });
+        child.once("error", reject);
     });
-
-    const label = cmdToRun.slice(0, 60);
-    backgroundProcesses.set(id, { pid: child.pid || 0, label, startedAt: Date.now() });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        stdout += text;
-        // Emit streaming chunks for CLI
-        cmdEvents.emit("output", { id, type: "stdout", text });
+    void started.catch(() => {});
+    const finished = new Promise<{code: number | null; stdout: string; stderr: string}>((resolve, reject) => {
+        let stdout = "";
+        let stderr = "";
+        child.stdout?.setEncoding("utf-8").on("data", (text: string) => {
+            stdout = boundToolResult(stdout + text, 8000);
+            if (id) cmdEvents.emit("output", { id, type: "stdout", text });
+        });
+        child.stderr?.setEncoding("utf-8").on("data", (text: string) => {
+            stderr = boundToolResult(stderr + text, 4000);
+            if (id) cmdEvents.emit("output", { id, type: "stderr", text });
+        });
+        child.once("error", reject);
+        child.once("close", code => {
+            if (id) {
+                backgroundProcesses.delete(id);
+                cmdEvents.emit("done", { id, code, stdout, stderr });
+            }
+            resolve({ code, stdout, stderr });
+        });
     });
+    void finished.catch(() => {});
+    return { started, finished };
+}
 
-    child.stderr?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        stderr += text;
-        cmdEvents.emit("output", { id, type: "stderr", text });
+function stopProcess(child: ChildProcess): void {
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+    if (process.platform !== "win32") {
+        child.kill("SIGTERM");
+        return;
+    }
+    const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    killer.once("error", () => child.kill());
+    killer.once("close", code => {
+        if (code !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
     });
-
-    child.on("close", (code) => {
-        backgroundProcesses.delete(id);
-        const truncOut = stdout.length > 3000 ? stdout.slice(0, 3000) + "\n...[TRUNCADO]" : stdout;
-        cmdEvents.emit("done", { id, code, stdout: truncOut.trim(), stderr: stderr.trim() });
-    });
-
-    child.on("error", (err) => {
-        backgroundProcesses.delete(id);
-        cmdEvents.emit("done", { id, code: 1, stdout: "", stderr: err.message });
-    });
-
-    return `Proceso lanzado en segundo plano [${id}] (PID: ${child.pid || "?"}). Usa /status para verificar.`;
 }
