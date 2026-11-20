@@ -191,8 +191,10 @@ class ProviderRegistryClass {
         const h = this.health.get(id);
         if (!h) return;
         h.totalCalls++;
-        h.consecutiveRateLimits = 0;
-        h.cooldownUntil = 0;
+        if (h.cooldownUntil <= Date.now()) {
+            h.consecutiveRateLimits = 0;
+            h.cooldownUntil = 0;
+        }
         h.avgLatencyMs = Math.round((h.avgLatencyMs * (h.totalCalls - 1) + latencyMs) / h.totalCalls);
         if (usage) {
             h.totalTokensIn  += usage.inputTokens;

@@ -52,7 +52,10 @@ function ask(port: number, id: string, payload: Record<string, unknown>): Promis
         const ws = new WebSocket(`ws://127.0.0.1:${port}`, { handshakeTimeout: 5000 });
         const deadline = setTimeout(() => finish(new Error("Orbit no terminó la solicitud a tiempo.")), 240_000);
         let output = "";
+        let settled = false;
         function finish(error?: Error) {
+            if (settled) return;
+            settled = true;
             clearTimeout(deadline);
             process.off("SIGINT", interrupt);
             if (error) reject(error);
@@ -66,7 +69,13 @@ function ask(port: number, id: string, payload: Record<string, unknown>): Promis
         process.once("SIGINT", interrupt);
         ws.once("open", () => ws.send(JSON.stringify({ type: "chat", payload })));
         ws.on("message", data => {
-            const message = JSON.parse(data.toString()) as Record<string, unknown>;
+            let message: Record<string, unknown>;
+            try {
+                message = JSON.parse(data.toString());
+            } catch {
+                finish(new Error("La respuesta del gateway no es válida."));
+                return;
+            }
             if (message.type === "error") {
                 finish(new Error(String(message.message || "Orbit devolvió un error.")));
                 return;

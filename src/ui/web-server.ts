@@ -51,6 +51,11 @@ export async function startWebServer(port: number, gatewayPort: number) {
             res.end(JSON.stringify({ service: "orbit", status: "ok" }));
             return;
         }
+        if (pathname === "/session" && req.method === "GET") {
+            res.writeHead(200, { ...headers, "Content-Type": "application/json" });
+            res.end(JSON.stringify({ token: getSessionToken(), port: gatewayPort }));
+            return;
+        }
         const vendorPath = VENDOR_FILES.get(pathname);
         const filePath = vendorPath || path.resolve(WEB_DIR, pathname === "/" ? "index.html" : "." + pathname);
         const type = TYPES[path.extname(filePath)];

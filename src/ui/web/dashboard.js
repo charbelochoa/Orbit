@@ -94,7 +94,7 @@ function renderConvList(){persistConversations();var list=g('conv-list');list.in
 function reloadConvMessages(){var conv=getActiveConv();clearChatUI();if(!conv||!conv.messages.length)return;conv.messages.forEach(function(m){if(m.role==='user')addUserBubble(m.content);else if(m.role==='orbit')addOrbitBubble(m.content);});}
 
 var streaming=false,curOrbitGroup=null,curOrbitBody=null,curStreamText='',isAtBottom=true,unreadCount=0;
-function clearChatUI(){g('messages').innerHTML='';curOrbitGroup=null;curOrbitBody=null;curStreamText='';streaming=false;g('welcome').style.display='';}
+function clearChatUI(){showThinking(false);toolBlockMap={};g('messages').innerHTML='';curOrbitGroup=null;curOrbitBody=null;curStreamText='';streaming=false;g('welcome').style.display='';}
 function killWelcome(){g('welcome').style.display='none';}
 function scrollBottom(smooth){var el=g('chat-scroll');el.scrollTo({top:el.scrollHeight,behavior:smooth?'smooth':'instant'});}
 g('chat-scroll').addEventListener('scroll',function(){var el=this,dist=el.scrollHeight-el.scrollTop-el.clientHeight;isAtBottom=dist<60;g('scroll-to-bottom').classList.toggle('visible',!isAtBottom);if(isAtBottom){unreadCount=0;updateUnreadBadge();}});
@@ -105,7 +105,32 @@ function makeMsgAvatar(){var element=document.createElement('span');element.clas
 
 function addUserBubble(text){killWelcome();finishStream();var group=document.createElement('div');group.className='msg-group user';group.innerHTML='<div class="msg-bubble">'+esc(text)+'</div><div class="msg-meta">Tú · '+tsShort()+'</div>';g('messages').appendChild(group);if(isAtBottom)scrollBottom(false);else{unreadCount++;updateUnreadBadge();}return group;}
 
-function addOrbitBubble(htmlContent){killWelcome();var group=document.createElement('div');group.className='msg-group orbit';var bodyDiv=document.createElement('div');bodyDiv.className='msg-body';if(typeof htmlContent==='string'){bodyDiv.innerHTML=renderMd(htmlContent);decorateReply(bodyDiv);}var avatarDiv=document.createElement('div');avatarDiv.className='msg-avatar';avatarDiv.appendChild(makeMsgAvatar());group.innerHTML='<div class="msg-header"></div>';group.querySelector('.msg-header').appendChild(avatarDiv);group.querySelector('.msg-header').innerHTML+='<span class="msg-name">Orbit</span><span class="msg-time">'+tsShort()+'</span>';group.querySelectorAll('.msg-header')[0].insertBefore(avatarDiv,group.querySelector('.msg-name'));group.appendChild(bodyDiv);g('messages').appendChild(group);if(isAtBottom)scrollBottom(false);else{unreadCount++;updateUnreadBadge();}return group;}
+function addOrbitBubble(text) {
+  killWelcome();
+  const group = document.createElement('div');
+  group.className = 'msg-group orbit';
+  const header = document.createElement('div');
+  header.className = 'msg-header';
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.appendChild(makeMsgAvatar());
+  const name = document.createElement('span');
+  name.className = 'msg-name';
+  name.textContent = 'Orbit';
+  const time = document.createElement('span');
+  time.className = 'msg-time';
+  time.textContent = tsShort();
+  header.append(avatar, name, time);
+  const content = document.createElement('div');
+  content.className = 'msg-body';
+  content.innerHTML = renderMd(text);
+  decorateReply(content);
+  group.append(header, content);
+  g('messages').appendChild(group);
+  if (isAtBottom) scrollBottom(false);
+  else { unreadCount++; updateUnreadBadge(); }
+  return group;
+}
 
 function startOrbitStream(){finishStream();killWelcome();var group=document.createElement('div');group.className='msg-group orbit';var bodyDiv=document.createElement('div');bodyDiv.className='msg-body stream-cursor';var avatarDiv=document.createElement('div');avatarDiv.className='msg-avatar';avatarDiv.appendChild(makeMsgAvatar());var header=document.createElement('div');header.className='msg-header';header.appendChild(avatarDiv);var nameEl=document.createElement('span');nameEl.className='msg-name';nameEl.textContent='Orbit';var timeEl=document.createElement('span');timeEl.className='msg-time';timeEl.textContent=tsShort();header.appendChild(nameEl);header.appendChild(timeEl);group.appendChild(header);group.appendChild(bodyDiv);g('messages').appendChild(group);curOrbitGroup=group;curOrbitBody=bodyDiv;curStreamText='';streaming=true;if(isAtBottom)scrollBottom(false);}
 
@@ -123,7 +148,53 @@ function showThinking(visible,label){if(visible){if(thinkingEl)return;thinkingEl
 
 var ws=null,reconnT=null,reconnCount=0;
 var IS_ELECTRON=!!(window.orbitElectron&&window.orbitElectron.isElectron);
-function connect(){clearTimeout(reconnT);try{ws=new WebSocket('ws://127.0.0.1:'+gatewayPort+'?token='+encodeURIComponent(orbitToken));}catch(e){schedRecon();return;}ws.onopen=function(){reconnCount=0;setConn('online');setBadge('ws-badge','ok');sendWs({type:'status'});g('send-btn').disabled=!g('msg-input').value.trim();};ws.onclose=function(){permissionQueue.length=0;showNextPermission();stopVoice(false);orbitAudio.stopPlayback();setSendMode(false);setConn('offline');schedRecon();setBadge('ws-badge','err');};ws.onerror=function(){};ws.onmessage=function(e){try{handle(JSON.parse(e.data));}catch(_){};};}
+async function connect() {
+  clearTimeout(reconnT);
+  let token = orbitToken;
+  let port = gatewayPort;
+  try {
+    const response = await fetch('/session', {cache:'no-store', signal:AbortSignal.timeout(3000)});
+    if (response.ok) {
+      const session = await response.json();
+      if (typeof session.token === 'string' && Number.isInteger(session.port)) {
+        token = session.token;
+        port = session.port;
+      }
+    }
+  } catch {}
+  try {
+    ws = new WebSocket('ws://127.0.0.1:' + port + '?token=' + encodeURIComponent(token));
+  } catch {
+    schedRecon();
+    return;
+  }
+  ws.onclose = () => {
+    permissionQueue.length = 0;
+    showNextPermission();
+    stopVoice(false);
+    orbitAudio.stopPlayback();
+    setSendMode(false);
+    g('send-btn').disabled = true;
+    setConn('offline');
+    setBadge('ws-badge','err');
+    schedRecon();
+  };
+  ws.onmessage = event => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type === 'connected') {
+        if (!message.authenticated) { ws.close(); return; }
+        reconnCount = 0;
+        setConn('online');
+        setBadge('ws-badge','ok');
+        sendWs({type:'status'});
+        g('send-btn').disabled = !g('msg-input').value.trim();
+        return;
+      }
+      handle(message);
+    } catch {}
+  };
+}
 function schedRecon(){reconnCount++;var delay=Math.min(30000,1500*Math.pow(2,reconnCount-1));reconnT=setTimeout(connect,delay);}
 function sendWs(o){
   if(ws?.readyState!==WebSocket.OPEN)return;
@@ -141,7 +212,7 @@ function handle(msg){
     case 'orbit_message':showThinking(false);finishStream();saveChatMessage('orbit',msg.text);addOrbitBubble(msg.text);setStatus('');setSendMode(false);break;
     case 'orbit_chunk':showThinking(false);appendChunk(msg.text);break;
     case 'voice_audio':if(soundsEnabled)orbitAudio.play(msg.pcm,msg.sampleRate);break;
-    case 'turn_complete':finishStream();showThinking(false);setStatus('');setSendMode(false);break;
+    case 'turn_complete':finishStream();showThinking(false);if(!g('status-bar').classList.contains('err'))setStatus('');setSendMode(false);break;
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
     case 'tool_result':finalizeToolBlock(msg.tool,!msg.error,msg.result);finalizeToolEvent(msg.tool,!msg.error,msg.result);break;
     case 'typing':if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;
@@ -189,7 +260,7 @@ function handle(msg){
 
 var sendStreaming=false;
 function setSendMode(active){sendStreaming=active;var btn=g('send-btn');if(active){btn.disabled=false;btn.classList.add('streaming');btn.title='Detener';btn.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';}else{btn.classList.remove('streaming');btn.title='Enviar (Enter)';btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';btn.disabled=!g('msg-input').value.trim();}}
-function sendMessage(){if(sendStreaming){orbitAudio.stopPlayback();sendWs({type:'chat',payload:{text:'/stop'}});return;}var inp=g('msg-input'),text=inp.value.trim();if(!text||!ws||ws.readyState!==1)return;if(!activeConvId)createConversation(text.slice(0,42));renameConvFromFirstMessage(text);var conv=getActiveConv();if(conv)conv.messages.push({role:'user',content:text,ts:Date.now()});addUserBubble(text);sendWs({type:'chat',payload:{text:text,conversationId:activeConvId}});renderConvList();inp.value='';inp.style.height='auto';updateCharCount();setSendMode(true);showThinking(true,'Pensando...');hideSlashMenu();}
+function sendMessage(){if(orbitAudio.capture){setStatus('Envía el audio antes de escribir.','warn');return;}if(sendStreaming){orbitAudio.stopPlayback();sendWs({type:'chat',payload:{text:'/stop'}});return;}var inp=g('msg-input'),text=inp.value.trim();if(!text||!ws||ws.readyState!==1)return;if(!activeConvId)createConversation(text.slice(0,42));renameConvFromFirstMessage(text);var conv=getActiveConv();if(conv)conv.messages.push({role:'user',content:text,ts:Date.now()});addUserBubble(text);sendWs({type:'chat',payload:{text:text,conversationId:activeConvId}});renderConvList();inp.value='';inp.style.height='auto';updateCharCount();setSendMode(true);showThinking(true,'Pensando...');hideSlashMenu();}
 g('send-btn').addEventListener('click',sendMessage);
 g('msg-input').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}if(e.key==='Escape')hideSlashMenu();if(slashMenuVisible){if(e.key==='ArrowDown'){e.preventDefault();moveSlashSel(1);}if(e.key==='ArrowUp'){e.preventDefault();moveSlashSel(-1);}if(e.key==='Tab'||e.key==='Enter'){if(e.key==='Tab')e.preventDefault();applySlashSel();}}});
 g('msg-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px';g('send-btn').disabled=!this.value.trim()&&!sendStreaming;updateCharCount();handleSlashInput(this.value);});
