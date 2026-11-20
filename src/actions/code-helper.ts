@@ -75,10 +75,14 @@ function scriptCommand(filePath: string, ext: ScriptExtension): { file: string; 
     }
 }
 
-async function runCode(filePath: string, ext: ScriptExtension, signal?: AbortSignal): Promise<{ stdout: string; stderr: string; success: boolean }> {
+type ScriptResult = { success: true; stdout: string } | { success: false; error: string; repairable: boolean };
+
+async function runCode(filePath: string, ext: ScriptExtension, signal?: AbortSignal): Promise<ScriptResult> {
+    signal?.throwIfAborted();
+    if (!(await fs.stat(filePath)).isFile()) throw new Error("El script debe ser un archivo.");
     const command = scriptCommand(filePath, ext);
     try {
-        const { stdout, stderr } = await execFileAsync(command.file, command.args, {
+        const { stdout } = await execFileAsync(command.file, command.args, {
             encoding: "utf8",
             timeout: 30_000,
             cwd: path.dirname(filePath),
@@ -87,10 +91,16 @@ async function runCode(filePath: string, ext: ScriptExtension, signal?: AbortSig
             env: command.env,
             signal,
         });
-        return { stdout: stdout.trim(), stderr: stderr.trim(), success: true };
-    } catch (e: any) {
         signal?.throwIfAborted();
-        return { stdout: (e.stdout || "").trim(), stderr: (e.stderr || e.message || "").trim(), success: false };
+        return { success: true, stdout: stdout.trim() };
+    } catch (error) {
+        signal?.throwIfAborted();
+        const failure = error as Error & { code?: string | number; stderr?: string; killed?: boolean };
+        if (failure.code === "ENOENT") {
+            return { success: false, error: `No se encontró el intérprete: ${command.file}`, repairable: false };
+        }
+        const repairable = typeof failure.code === "number" && !failure.killed;
+        return { success: false, error: failure.stderr?.trim() || failure.message, repairable };
     }
 }
 
@@ -108,11 +118,14 @@ async function writeScript(filePath: string, task: string, language: string, ext
                 const output = result.stdout || "(sin salida)";
                 return `Código ejecutado correctamente.\nArchivo: ${targetPath}\nSalida:\n${output.slice(0, 2000)}`;
             }
+            if (!result.repairable) {
+                return `Código guardado en: ${targetPath}\nError de ejecución: ${result.error.slice(0, 500)}`;
+            }
             if (attempt === MAX_FIX_ATTEMPTS) {
-                return `Código guardado, pero falló tras ${attempt} intentos.\nArchivo: ${targetPath}\nÚltimo error: ${result.stderr.slice(0, 500)}`;
+                return `Código guardado, pero falló tras ${attempt} intentos.\nArchivo: ${targetPath}\nÚltimo error: ${result.error.slice(0, 500)}`;
             }
             console.log(`[Code Helper] Intento ${attempt} falló, corrigiendo...`);
-            code = await generateCode("Repair the program using the reported error.", { code, error: result.stderr, language }, signal);
+            code = await generateCode("Repair the program using the reported error.", { code, error: result.error, language }, signal);
             await writeFileAtomically(targetPath, code, signal);
         }
     });
@@ -138,7 +151,7 @@ export async function codeHelper(parameters: any, signal?: AbortSignal): Promise
                 if (!filePath) return "Necesito el file_path del archivo a ejecutar.";
                 const result = await runCode(filePath, ext, signal);
                 if (result.success) return `Ejecutado correctamente.\nSalida:\n${(result.stdout || "(sin salida)").substring(0, 2000)}`;
-                return `Error al ejecutar:\n${result.stderr.substring(0, 1000)}`;
+                return `Error al ejecutar:\n${result.error.slice(0, 1000)}`;
             }
             case "fix": {
                 if (!filePath) return "Necesito el file_path del archivo a corregir.";
@@ -146,7 +159,8 @@ export async function codeHelper(parameters: any, signal?: AbortSignal): Promise
                     const code = await fs.readFile(filePath, { encoding: "utf8", signal });
                     const result = await runCode(filePath, ext, signal);
                     if (result.success) return "El código ya funciona correctamente.";
-                    const fixed = await generateCode("Repair the program using the reported error.", { code, error: result.stderr, language: sourceLanguage }, signal);
+                    if (!result.repairable) return `Error al ejecutar:\n${result.error.slice(0, 1000)}`;
+                    const fixed = await generateCode("Repair the program using the reported error.", { code, error: result.error, language: sourceLanguage }, signal);
                     await writeFileAtomically(filePath, fixed, signal);
                     return `Código corregido en: ${filePath}`;
                 });
