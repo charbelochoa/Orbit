@@ -64,3 +64,15 @@ export class OrbitToolError extends Error {
         return JSON.stringify(payload);
     }
 }
+
+export function getToolFailure(output: string): Error | undefined {
+    if (/^Error(?:\s|:)|^Comando bloqueado:/i.test(output)) return new Error(output);
+    if (!output.startsWith('{"error":')) return undefined;
+    try {
+        const payload = JSON.parse(output) as Partial<OrbitErrorPayload>;
+        if (payload.tool && payload.error && payload.message) {
+            return new OrbitToolError(payload.tool, payload.error, payload.message, payload);
+        }
+    } catch {}
+    return undefined;
+}

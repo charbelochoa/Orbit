@@ -98,6 +98,7 @@ class SubagentRegistryClass {
             log.info(`Subagente '${id}' completado.`);
             broadcast({ type: "subagent_done", id, result });
         } catch (e: any) {
+            if (record.executor && record.endedAt) return;
             record.status  = "failed";
             record.error   = e.message;
             record.endedAt = new Date();

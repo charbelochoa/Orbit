@@ -229,9 +229,9 @@ export const orbitConfigSchema = z.object({
      */
     agent: z.object({
         /** Maximum steps a single plan can have before rejection */
-        maxPlanSteps: z.number().default(30),
+        maxPlanSteps: z.number().int().min(1).max(60).default(30),
         /** Maximum replan attempts before aborting */
-        maxReplans:   z.number().default(3),
+        maxReplans:   z.number().int().min(0).max(8).default(3),
         /** Maximum loops for the visual agent loop (Phase 2) */
         maxVisualLoops: z.number().default(25),
         maxChatSteps: z.number().int().min(1).max(40).default(12),

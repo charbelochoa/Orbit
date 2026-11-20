@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { OrbitTool } from "../core/registry.js";
 import type { ChatMessage, TextGenerationParams, TextGenerationResult } from "../providers/types.js";
 import { IterationBudget } from "./iteration-budget.js";
+import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
 
 const decisionSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("reply"), text: z.string().trim().min(1) }),
@@ -20,7 +21,7 @@ interface TurnOptions {
     signal: AbortSignal;
     generate: (params: TextGenerationParams) => Promise<TextGenerationResult>;
     execute: (name: string, args: Record<string, unknown>) => Promise<string>;
-    onTool: (name: string, result?: string) => void;
+    onTool: (name: string, result?: string, failed?: boolean) => void;
     onUsage: (input: number, output: number) => void;
 }
 
@@ -64,13 +65,18 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
 
         options.onTool(decision.name);
         let output: string;
+        let failed = false;
         try {
             output = await options.execute(decision.name, decision.args);
+            failed = Boolean(getToolFailure(output));
         } catch (error) {
-            output = "Error: " + (error instanceof Error ? error.message : String(error));
+            failed = true;
+            output = error instanceof OrbitToolError
+                ? error.toAgentString()
+                : "Error: " + (error instanceof Error ? error.message : String(error));
         }
         signal.throwIfAborted();
-        options.onTool(decision.name, output);
+        options.onTool(decision.name, output, failed);
         messages.push({
             role: "user",
             content: JSON.stringify({ tool: decision.name, output: output.slice(0, 12000) }),

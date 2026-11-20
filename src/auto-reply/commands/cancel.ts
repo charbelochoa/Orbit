@@ -16,13 +16,9 @@ export const cancelCommand: CommandHandler = async (ctx) => {
     if (!task) {
         return `Tarea "${taskId}" no encontrada. Usa /status para ver las tareas activas.`;
     }
-    if (task.status === "done" || task.status === "failed") {
+    if (!getQueue().cancel(taskId)) {
         return `La tarea "${taskId}" ya terminó con estado: ${task.status}.`;
     }
 
-    // Cast to any to mutate the status — the TaskQueue holds the reference
-    (task as any).status = "failed";
-    (task as any).result = "Cancelada por el usuario";
-    ctx.sendReply({ type: "task_cancelled", taskId });
     return `Tarea ${taskId} cancelada.`;
 };

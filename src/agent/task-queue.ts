@@ -31,7 +31,7 @@ export interface Task {
     id: string;
     goal: string;
     priority: TaskPriority;
-    status: "pending" | "running" | "done" | "failed" | "cancelled";
+    status: "pending" | "running" | "paused" | "done" | "failed" | "cancelled";
     createdAt: Date;
     startedAt?: Date;
     endedAt?: Date;
@@ -59,6 +59,9 @@ class TaskQueue {
      * Submit a new task. Returns task ID immediately.
      */
     submit(goal: string, priority: TaskPriority = TaskPriority.NORMAL, speak?: (msg: string) => void): string {
+        if (typeof goal !== "string" || !goal.trim() || goal.length > 32_000) {
+            throw new Error("Indica un objetivo de hasta 32 000 caracteres.");
+        }
         const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const task: Task = {
             id, goal, priority,
@@ -90,7 +93,7 @@ class TaskQueue {
             this.runningCount++;
             task.status = "running";
             task.startedAt = new Date();
-            task.executor = new AgentExecutor();
+            task.executor = new AgentExecutor(id);
 
             log.info(`Ejecutando tarea: ${id}`);
             broadcast({ type: "task_started", id });
@@ -112,14 +115,14 @@ class TaskQueue {
                 if (task.speak) task.speak(msg);
             });
 
+            if (task.status === "cancelled") return;
             task.status = "done";
             task.result = result;
             task.endedAt = new Date();
             log.info(`Tarea completada: ${task.id}`);
             broadcast({ type: "task_done", id: task.id, result: result?.slice(0, 200) });
-
-            if (task.speak) task.speak(`Tarea completada: ${result?.slice(0, 80)}`);
         } catch (e: any) {
+            if (task.status === "cancelled") return;
             task.status = "failed";
             task.error = e.message;
             task.endedAt = new Date();
@@ -135,7 +138,7 @@ class TaskQueue {
         const task = this.tasks.get(id);
         if (!task || task.status !== "running" || !task.executor) return false;
         task.executor.pause();
-        task.status = "paused" as any;
+        task.status = "paused";
         log.info(`Tarea pausada: ${id}`);
         broadcast({ type: "task_paused", id });
         return true;
@@ -146,7 +149,7 @@ class TaskQueue {
      */
     resume(id: string): boolean {
         const task = this.tasks.get(id);
-        if (!task || (task.status as string) !== "paused" || !task.executor) return false;
+        if (!task || task.status !== "paused" || !task.executor) return false;
         task.executor.resume();
         task.status = "running";
         log.info(`Tarea reanudada: ${id}`);
@@ -170,7 +173,7 @@ class TaskQueue {
             return true;
         }
 
-        if (task.status === "running" && task.executor) {
+        if ((task.status === "running" || task.status === "paused") && task.executor) {
             task.executor.cancel();
             task.status = "cancelled";
             task.endedAt = new Date();

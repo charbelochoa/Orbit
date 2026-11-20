@@ -120,12 +120,12 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
                 signal: AbortSignal.any([deadline, AbortSignal.timeout(45_000)]),
             }, provider),
             execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name),
-            onTool: (name, result) => {
+            onTool: (name, result, failed) => {
                 if (result === undefined) {
                     send({ type: "tool_call", tool: name, args: {} });
                     send({ type: "typing", state: "executing", tool: name });
                 } else {
-                    send({ type: "tool_result", tool: name, result: result.slice(0, 1500) });
+                    send({ type: "tool_result", tool: name, error: failed, result: result.slice(0, 1500) });
                     send({ type: "typing", state: "thinking" });
                 }
             },
