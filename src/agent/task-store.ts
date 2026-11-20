@@ -13,6 +13,7 @@ type TaskRow = Pick<Task, "id" | "goal" | "workspace" | "priority" | "status"> &
     result: string | null;
     error: string | null;
     depends_on: string | null;
+    checkpoint: string | null;
 };
 
 export class TaskStore {
@@ -36,17 +37,23 @@ export class TaskStore {
                 output TEXT NOT NULL,
                 result TEXT,
                 error TEXT,
-                depends_on TEXT
+                depends_on TEXT,
+                checkpoint TEXT
             );
         `);
-        if (!this.database.prepare("PRAGMA table_info(tasks)").all().some(column => column.name === "depends_on")) {
+        const columns = new Set(this.database.prepare("PRAGMA table_info(tasks)").all().map(column => column.name));
+        if (!columns.has("depends_on")) {
             this.database.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
+        }
+        if (!columns.has("checkpoint")) {
+            this.database.exec("ALTER TABLE tasks ADD COLUMN checkpoint TEXT");
         }
     }
 
     recover(): Task[] {
         this.database.prepare(`
-            UPDATE tasks SET status = 'failed', ended_at = ?, error = ?
+            UPDATE tasks SET status = CASE WHEN checkpoint IS NULL THEN 'failed' ELSE 'interrupted' END,
+                ended_at = ?, error = ?
             WHERE status IN ('running', 'paused')
         `).run(Date.now(), "Orbit se cerró durante la ejecución. Revisa el progreso antes de reintentar.");
         const rows = this.database.prepare("SELECT * FROM tasks ORDER BY created_at, id").all() as unknown as TaskRow[];
@@ -63,19 +70,22 @@ export class TaskStore {
             result: row.result ?? undefined,
             error: row.error ?? undefined,
             dependsOn: row.depends_on ?? undefined,
+            checkpoint: row.checkpoint === null ? undefined : JSON.parse(row.checkpoint),
         }));
     }
 
     save(task: Task): void {
         this.database.prepare(`
-            INSERT INTO tasks (id, goal, workspace, priority, status, created_at, started_at, ended_at, output, result, error, depends_on)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, goal, workspace, priority, status, created_at, started_at, ended_at, output, result, error, depends_on, checkpoint)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET status = excluded.status, started_at = excluded.started_at,
-                ended_at = excluded.ended_at, output = excluded.output, result = excluded.result, error = excluded.error
+                ended_at = excluded.ended_at, output = excluded.output, result = excluded.result,
+                error = excluded.error, checkpoint = excluded.checkpoint
         `).run(
             task.id, task.goal, task.workspace, task.priority, task.status, task.createdAt.getTime(),
             task.startedAt?.getTime() ?? null, task.endedAt?.getTime() ?? null, JSON.stringify(task.output),
             task.result ?? null, task.error ?? null, task.dependsOn ?? null,
+            task.checkpoint ? JSON.stringify(task.checkpoint) : null,
         );
     }
 

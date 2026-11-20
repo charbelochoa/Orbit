@@ -4,6 +4,7 @@ import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 import { withWorkspace, workspaceRoot } from "../core/workspace.js";
 import { TaskStore } from "./task-store.js";
+import type { TaskCheckpoint } from "./task-checkpoint.js";
 
 const log = createLogger("TaskQueue");
 
@@ -36,12 +37,13 @@ export interface Task {
     workspace: string;
     dependsOn?: string;
     priority: TaskPriority;
-    status: "pending" | "running" | "paused" | "done" | "failed" | "cancelled";
+    status: "pending" | "running" | "paused" | "interrupted" | "done" | "failed" | "cancelled";
     createdAt: Date;
     startedAt?: Date;
     endedAt?: Date;
     result?: string;
     error?: string;
+    checkpoint?: TaskCheckpoint;
     output: string[];            // streaming output lines
     executor?: AgentExecutor;
     speak?: (msg: string) => void;
