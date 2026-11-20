@@ -131,7 +131,7 @@ async function chat({ text, sessionId, send, signal }: ChatTurn) {
             maxIterations: getConfig().agent.maxChatSteps,
             signal: deadline,
             generate: params => providerRegistry.generateText(params),
-            execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name),
+            execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline, sessionId), deadline, name),
             onTool: (name, result, failed) => {
                 if (result === undefined) {
                     send({ type: "tool_call", tool: name, args: {} });
@@ -188,7 +188,7 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
                 send({ type: "tool_call", tool: name, args: {} });
                 send({ type: "typing", state: "executing", tool: name });
                 try {
-                    const output = await runInLane(sessionId, () => executeTool(name, args, toolSignal), toolSignal, name);
+                    const output = await runInLane(sessionId, () => executeTool(name, args, toolSignal, sessionId), toolSignal, name);
                     send({ type: "tool_result", tool: name, result: output.slice(0, 1500) });
                     return output;
                 } catch (error) {

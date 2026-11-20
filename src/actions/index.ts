@@ -47,7 +47,7 @@ const log = createLogger("ToolRouter");
  * Phase 1: validates tool existence + policy before dispatch.
  * Phase 6: PreToolUse / PostToolUse lifecycle hooks.
  */
-export async function executeTool(name: string, args: any, signal?: AbortSignal): Promise<string> {
+export async function executeTool(name: string, args: any, signal?: AbortSignal, sessionId?: string): Promise<string> {
     signal?.throwIfAborted();
     const tool = toolRegistry.get(name === "screen_process" ? "screen_vision" : name);
     if (!tool) {
@@ -146,7 +146,7 @@ case "run_swarm": {
         const tasks = args.tasks || [];
         const swarmResult = await runSwarm(tasks, {
             name:        args.name,
-            sessionId:   args.sessionId,
+            sessionId,
             timeoutMs:   args.timeoutMs,
             concurrency: args.concurrency,
             signal,
@@ -158,7 +158,7 @@ case "run_swarm": {
 case "spawn_subagent": {
         const subId = subagentRegistry.spawn({
             goal:            args.goal || "",
-            parentSessionId: args.parentSessionId || "main",
+            parentSessionId: sessionId || args.parentSessionId || "main",
             toolProfile:     args.toolProfile,
             maxSteps:        args.maxSteps,
             timeoutMs:       args.timeoutMs,

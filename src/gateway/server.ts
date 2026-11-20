@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import crypto from "crypto";
 import { loadMemory }    from "../memory/memory-manager.js";
 import { getQueue, TaskPriority } from "../agent/task-queue.js";
+import { cancelWork, listDelegatedJobs } from "../agent/delegated-jobs.js";
 import { isCommand, dispatchCommand } from "../auto-reply/index.js";
 import { resolvePermission } from "../core/permission-broker.js";
 import { loopRegistry } from "../agent/loop-registry.js";
@@ -350,7 +351,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 workspace: workspaceRoot(),
                 gemini: providerRegistry.get("gemini")?.isAvailable() ?? false,
                 python: process.env.ORBIT_VISION_ENGINE === "1",
-                tasks: tasks.slice(-100).reverse(),
+                tasks: [...listDelegatedJobs(), ...tasks.slice(-100).reverse()],
                 tokensUsed:    _sessionTotalTokens,
                 inputTokens:   _sessionInputTokens,
                 outputTokens:  _sessionOutputTokens,
@@ -446,7 +447,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
 
         case "task_cancel": {
             const id = payload?.id;
-            const ok = typeof id === "string" && getQueue().cancel(id);
+            const ok = typeof id === "string" && cancelWork(id);
             client.ws.send(JSON.stringify({ type: "task_cancel_ack", id, ok }));
             break;
         }

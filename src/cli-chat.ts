@@ -176,7 +176,7 @@ const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
   { cmd: "/model",   desc: "Cambia el modelo de IA" },
   { cmd: "/status",  desc: "Estado del sistema" },
   { cmd: "/skills",  desc: "Lista de skills disponibles" },
-  { cmd: "/cancel",  desc: "Cancela una tarea activa" },
+  { cmd: "/cancel",  desc: "Cancela una tarea, grupo o subagente" },
   { cmd: "/resume",  desc: "Continúa una tarea interrumpida" },
   { cmd: "/cost",    desc: "Tokens usados y costo de la sesión" },
   { cmd: "/compact", desc: "Resume la conversación para liberar contexto" },
@@ -678,6 +678,23 @@ class OrbitCLI {
         process.stdout.write(`\n${C.error}${msg.type === "task_interrupted" ? "Tarea interrumpida" : "Tarea fallida"}${RESET} ${msg.id}\n`);
         if (msg.error) this.printOrbitMessage(msg.error);
         this.showPrompt();
+        break;
+
+      case "swarm_started":
+        process.stdout.write(`\nGrupo ${msg.swarmId} · ${msg.name} · ${msg.total} subtareas\n`);
+        break;
+
+      case "swarm_done":
+        process.stdout.write(`\nGrupo ${msg.swarmId} · ${msg.succeeded} completadas, ${msg.failed} sin completar\n`);
+        break;
+
+      case "subagent_spawned":
+        if (!msg.swarmId) process.stdout.write(`\nSubagente ${msg.id} · ${msg.goal}\n`);
+        break;
+
+      case "subagent_cancelled":
+      case "subagent_timeout":
+        if (!msg.swarmId) process.stdout.write(`\nSubagente ${msg.id} · ${msg.error}\n`);
         break;
 
       case "memory":

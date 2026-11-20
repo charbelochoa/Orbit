@@ -105,7 +105,7 @@ export function initAutoReply(): void {
 
     commandRegistry.register({
         name:        "cancel",
-        description: "Cancela una tarea en ejecución",
+        description: "Cancela una tarea, grupo o subagente",
         usage:       "/cancel <taskId>",
         handler:     cancelCommand,
     });

@@ -3,22 +3,16 @@
  * Marks a queued or running task as cancelled.
  */
 
-import { getQueue }            from "../../agent/task-queue.js";
+import { cancelWork }          from "../../agent/delegated-jobs.js";
 import type { CommandHandler } from "../types.js";
 
 export const cancelCommand: CommandHandler = async (ctx) => {
     const taskId = ctx.args[0] ?? "";
     if (!taskId) {
-        return "Uso: /cancel <taskId>\nEjemplo: /cancel task_1234567_abcde";
+        return "Uso: /cancel <id de tarea, grupo o subagente>";
     }
 
-    const task = getQueue().status(taskId);
-    if (!task) {
-        return `Tarea "${taskId}" no encontrada. Usa /status para ver las tareas activas.`;
-    }
-    if (!getQueue().cancel(taskId)) {
-        return `La tarea "${taskId}" ya terminó con estado: ${task.status}.`;
-    }
-
-    return `Tarea ${taskId} cancelada.`;
+    return cancelWork(taskId)
+        ? `Se solicitó la cancelación de ${taskId}.`
+        : `${taskId} no está en ejecución ni en espera. Usa /status para ver el trabajo activo.`;
 };

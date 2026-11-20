@@ -4,6 +4,7 @@
  */
 
 import { getQueue }            from "../../agent/task-queue.js";
+import { listDelegatedJobs }   from "../../agent/delegated-jobs.js";
 import { toolRegistry }        from "../../core/registry.js";
 import { skillRegistry }       from "../../skills/registry.js";
 import { providerRegistry }    from "../../providers/registry.js";
@@ -16,18 +17,19 @@ export const statusCommand: CommandHandler = async (ctx) => {
     const done    = tasks.filter(t => t.status === "done").length;
     const failed  = tasks.filter(t => t.status === "failed").length;
     const interrupted = tasks.filter(t => t.status === "interrupted");
+    const delegated = listDelegatedJobs().filter(job => job.status === "running" || job.status === "pending");
 
     // Send structured data so the UI can render it properly
     ctx.sendReply({
         type: "status",
-        tasks: tasks.map(t => ({
+        tasks: [...delegated, ...tasks.map(t => ({
             id:       t.id,
             goal:     t.goal.slice(0, 60),
             status:   t.status,
             priority: t.priority,
             provider: t.provider,
             model:    t.model,
-        })),
+        }))],
     });
 
     const provInfo   = providerRegistry.getActiveInfo();
@@ -41,5 +43,6 @@ export const statusCommand: CommandHandler = async (ctx) => {
         `📚 Skills cargados:   ${skillRegistry.count}`,
         `📋 Tareas: ${pending} pendientes | ${running} activas | ${done} completadas | ${failed} fallidas`,
         ...interrupted.map(task => `Interrumpida ${task.id} · ${task.goal}${task.model ? ` · ${task.model}` : ""}`),
+        ...delegated.map(job => `${job.kind === "swarm" ? "Grupo" : "Subagente"} ${job.id} · ${job.goal}`),
     ].join("\n");
 };
