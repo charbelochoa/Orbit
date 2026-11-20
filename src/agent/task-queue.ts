@@ -7,6 +7,7 @@ import { TaskStore } from "./task-store.js";
 import { summarizeTaskSteps, type TaskCheckpoint } from "./task-checkpoint.js";
 import { providerRegistry } from "../providers/registry.js";
 import { withProviderSelection, type ProviderSelection } from "../providers/selection.js";
+import { withConfigSnapshot } from "../config/config.js";
 
 const log = createLogger("TaskQueue");
 
@@ -174,7 +175,7 @@ class TaskQueue {
             }
             task.executor = new AgentExecutor(id);
             const run = Promise.resolve().then(() => withWorkspace(task.workspace, () =>
-                withProviderSelection(task.providerSelection, () => this._run(task)),
+                withConfigSnapshot(() => withProviderSelection(task.providerSelection, () => this._run(task))),
             )).catch(error => {
                 log.error("Orbit no pudo guardar el estado de la tarea.", error);
             }).finally(() => {

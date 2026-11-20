@@ -9,7 +9,7 @@ import { loopRegistry } from "../agent/loop-registry.js";
 import { executeTool } from "../actions/index.js";
 import { runInLane } from "../agent/lanes.js";
 import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
-import { getConfig } from "../config/config.js";
+import { getConfig, withConfigSnapshot } from "../config/config.js";
 import { toolRegistry } from "../core/registry.js";
 import { clearHistory, getChatWorkspace, listChatConversations, readChatConversation } from "../memory/chat-history.js";
 import { chatSessionId, isConversationId } from "../core/conversations.js";
@@ -263,7 +263,9 @@ export async function startGateway(
                 const selection = ["chat", "task", "batch"].includes(msg.type)
                     ? providerRegistry.resolveRequestSelection(msg.payload?.provider, msg.payload?.model)
                     : undefined;
-                await withWorkspace(workspace, () => withProviderSelection(selection, () => handleClientMessage(id, msg, speakFn, chat, voice)));
+                await withWorkspace(workspace, () => withConfigSnapshot(() =>
+                    withProviderSelection(selection, () => handleClientMessage(id, msg, speakFn, chat, voice)),
+                ));
             } catch (e: any) {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: "error", message: e instanceof SyntaxError ? "Mensaje JSON inválido." : e.message }));
