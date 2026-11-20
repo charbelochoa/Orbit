@@ -240,6 +240,6 @@ case "new_tab": {
 }
 
 default: return `Browser action desconocida: ${action}`;} }catch (e: any) { console.error(`[Browser] Error:`, e);
-    return `Fallo en el navegador: ${e.message}`;
+    return `Error en el navegador: ${e.message}`;
     }
 }

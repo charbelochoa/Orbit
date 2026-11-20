@@ -5,7 +5,11 @@ import { getQueue, TaskPriority } from "../agent/task-queue.js";
 import { isCommand, dispatchCommand } from "../auto-reply/index.js";
 import { resolvePermission } from "../core/permission-broker.js";
 import { loopRegistry } from "../agent/loop-registry.js";
-import { browserControl } from "../actions/browser-control.js";
+import { executeTool } from "../actions/index.js";
+import { runInLane } from "../agent/lanes.js";
+import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
+import { getConfig } from "../config/config.js";
+import { toolRegistry } from "../core/registry.js";
 import { clearHistory } from "../memory/chat-history.js";
 import { providerRegistry } from "../providers/registry.js";
 import { resolveWorkspace, withWorkspace, workspaceRoot } from "../core/workspace.js";
@@ -461,27 +465,39 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
         }
 // ── Fase 6: Browser Pipeline ────────────────────────────────
         case "browser_pipeline": {
-            const steps: any[] = Array.isArray(payload?.steps) ? payload.steps : [];
-            if (!steps.length) {
-                client.ws.send(JSON.stringify({ type: "error", message: "browser_pipeline: se requiere 'steps' (array de acciones)" }));
+            const steps = Array.isArray(payload?.steps) ? payload.steps : [];
+            if (!steps.length || steps.length > 32) {
+                client.ws.send(JSON.stringify({ type: "error", message: "Indica entre 1 y 32 acciones de navegador." }));
                 break;
             }
-            const stopOnError = payload?.stop_on_error !== false;
-            const results: Array<{ step: number; action: string; result: string }> = [];
-            for (let i = 0; i < steps.length; i++) {
-                const step = steps[i];
-                try {
-                    const stepResult = await browserControl(step);
-                    results.push({ step: i, action: step.action ?? "?", result: stepResult });
-                    // Broadcast progress
-                    broadcast({ type: "browser_pipeline_step", step: i, total: steps.length, action: step.action, result: stepResult });
-                } catch (e: any) {
-                    results.push({ step: i, action: step.action ?? "?", result: `Error: ${e.message}` });
-                    broadcast({ type: "browser_pipeline_step", step: i, total: steps.length, action: step.action, result: `Error: ${e.message}` });
-                    if (stopOnError) break;
-                }
+            if (!toolRegistry.get("browser_control")?.profiles.includes(getConfig().toolProfile)) {
+                client.ws.send(JSON.stringify({ type: "error", message: "El perfil activo no tiene acceso al control del navegador." }));
+                break;
             }
-            client.ws.send(JSON.stringify({ type: "browser_pipeline_result", results, count: results.length }));
+            await runClientTurn(client, payload?.conversationId, async ({ sessionId, signal, send }) => {
+                const stopOnError = payload?.stop_on_error !== false;
+                const results: Array<{ step: number; action: string; result: string }> = [];
+                for (const [index, args] of steps.entries()) {
+                    signal.throwIfAborted();
+                    const action = typeof args?.action === "string" ? args.action : "?";
+                    let result: string;
+                    let failure: Error | undefined;
+                    try {
+                        result = await runInLane(sessionId, () => executeTool("browser_control", args, signal), signal, "browser_control");
+                        failure = getToolFailure(result);
+                    } catch (error) {
+                        failure = error instanceof Error ? error : new Error(String(error));
+                        result = `Error: ${failure.message}`;
+                    }
+                    signal.throwIfAborted();
+                    const record = { step: index, action, result };
+                    results.push(record);
+                    send({ type: "browser_pipeline_step", total: steps.length, ...record });
+                    const denied = failure instanceof OrbitToolError && failure.code === "PERMISSION_DENIED";
+                    if (denied || (failure && stopOnError)) break;
+                }
+                send({ type: "browser_pipeline_result", results, count: results.length });
+            }, payload?.requestId);
             break;
         }
 
