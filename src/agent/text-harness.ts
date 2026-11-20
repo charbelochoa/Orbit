@@ -102,12 +102,9 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
             signal.throwIfAborted();
             const tool = available.get(call.name);
             const args = parseToolArguments(call.arguments);
-            const missing = tool && args && Array.isArray(tool.parameters.required)
-                ? tool.parameters.required.filter(key => typeof key === "string" && !Object.hasOwn(args, key))
-                : [];
-            if (!tool || !args || missing.length || !executions.consume()) {
+            if (!tool || !args || !executions.consume()) {
                 const output = !tool ? "Unknown tool." : !args ? "Tool arguments must be a JSON object."
-                    : missing.length ? "Missing required arguments: " + missing.join(", ") : "Tool execution budget exhausted.";
+                    : "Tool execution budget exhausted.";
                 outcomes.push({ call, failed: true, output });
                 continue;
             }

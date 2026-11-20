@@ -19,6 +19,7 @@ import { reminder }         from "./reminder.js";
 import { toolRegistry }     from "../core/registry.js";
 import { policyEngine }     from "../core/tool-policy.js";
 import { requestPermission } from "../core/permission-broker.js";
+import { findToolInputError } from "../core/tool-input.js";
 import { isPlanMode, logPlannedStep } from "../agent/plan-mode.js";
 import { createLogger }     from "../infra/logger.js";
 import { subagentRegistry } from "../agent/subagent-registry.js";
@@ -48,11 +49,14 @@ const log = createLogger("ToolRouter");
  */
 export async function executeTool(name: string, args: any, signal?: AbortSignal): Promise<string> {
     signal?.throwIfAborted();
-    // Phase 1: Tool validation
-    if (!toolRegistry.has(name) && name !== "screen_process") {
+    const tool = toolRegistry.get(name === "screen_process" ? "screen_vision" : name);
+    if (!tool) {
         log.warn(`Tool desconocida: '${name}'`);
         throw new OrbitToolError(name, "NOT_FOUND", `Herramienta no implementada: ${name}.`);
     }
+    args ??= {};
+    const inputError = findToolInputError(tool.parameters, args);
+    if (inputError) throw new OrbitToolError(name, "INVALID_PARAMS", inputError);
 
     // Phase 1.3: Policy check
     const policy = policyEngine.evaluate(name, args);
@@ -62,7 +66,6 @@ export async function executeTool(name: string, args: any, signal?: AbortSignal)
     }
 
     // Sprint 8: Interactive permission dialog for "ask" policy
-    const tool = toolRegistry.get(name);
     const requiresApproval = getConfig().security.approvalRequired &&
         (tool?.capabilities.destructive || tool?.section === "comms");
     if (policy.action === "ask" || (requiresApproval && !policy.explicit)) {
