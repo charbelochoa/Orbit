@@ -188,7 +188,7 @@ export class AgentExecutor {
                 const failed = this.failure(step, message, denied);
                 if (canRetry && !denied && budget.remaining > 0 && !this.dispatchSignal.aborted) {
                     const attempt = MAX_ATTEMPTS - budget.remaining;
-                    const recovery = await analyzeError(step, message, attempt, goal);
+                    const recovery = await analyzeError(step, message, attempt, goal, this.dispatchSignal);
                     if (recovery.decision === ErrorDecision.RETRY && !this.dispatchSignal.aborted) {
                         if (onProgress && recovery.user_message) onProgress(recovery.user_message);
                         retryFailure = failed;
