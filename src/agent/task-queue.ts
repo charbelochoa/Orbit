@@ -2,6 +2,7 @@ import { AgentExecutor } from "./executor.js";
 import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 import { withWorkspace, workspaceRoot } from "../core/workspace.js";
+import { TaskStore } from "./task-store.js";
 
 const log = createLogger("TaskQueue");
 
@@ -50,11 +51,23 @@ class TaskQueue {
     private nextSequence = 0;
     private runningCount = 0;
     private maxConcurrent = 3;
+    private readonly store = new TaskStore();
     private static instance: TaskQueue;
 
     static getInstance(): TaskQueue {
         if (!TaskQueue.instance) TaskQueue.instance = new TaskQueue();
         return TaskQueue.instance;
+    }
+
+    private constructor() {
+        for (const task of this.store.recover()) {
+            this.tasks.set(task.id, task);
+            if (task.status === "pending") this.enqueue(task);
+        }
+    }
+
+    start(): void {
+        this.processNext();
     }
 
     /**
@@ -72,12 +85,9 @@ class TaskQueue {
             output: [],
             speak,
         };
+        this.store.save(task);
         this.tasks.set(id, task);
-
-        const entry = { id, priority, enqueuedAt: performance.now(), sequence: this.nextSequence++ };
-        const insertIdx = this.pending.findIndex(queued => compareQueueEntries(entry, queued) < 0);
-        if (insertIdx === -1) this.pending.push(entry);
-        else this.pending.splice(insertIdx, 0, entry);
+        this.enqueue(task);
 
         log.info(`Tarea '${id}' creada (prioridad: ${TaskPriority[priority]}): ${goal.slice(0, 60)}`);
         broadcast({ type: "task_created", id, goal });
@@ -86,15 +96,32 @@ class TaskQueue {
         return id;
     }
 
-    private async processNext() {
+    private enqueue(task: Task): void {
+        const entry = {
+            id: task.id,
+            priority: task.priority,
+            enqueuedAt: performance.now() - Math.max(0, Date.now() - task.createdAt.getTime()),
+            sequence: this.nextSequence++,
+        };
+        const insertIdx = this.pending.findIndex(queued => compareQueueEntries(entry, queued) < 0);
+        if (insertIdx === -1) this.pending.push(entry);
+        else this.pending.splice(insertIdx, 0, entry);
+    }
+
+    private processNext(): void {
         while (this.runningCount < this.maxConcurrent && this.pending.length > 0) {
             const { id } = this.pending.shift()!;
             const task = this.tasks.get(id);
             if (!task || task.status !== "pending") continue;
 
+            try {
+                this.update(task, { status: "running", startedAt: new Date() });
+            } catch (error) {
+                this.enqueue(task);
+                log.error("Orbit no pudo persistir el inicio de la tarea.", error);
+                return;
+            }
             this.runningCount++;
-            task.status = "running";
-            task.startedAt = new Date();
             task.executor = new AgentExecutor(id);
 
             log.info(`Ejecutando tarea: ${id}`);
@@ -103,7 +130,9 @@ class TaskQueue {
             if (task.speak) task.speak(`Comenzando tarea: ${task.goal.slice(0, 50)}...`);
 
             // Run async — don't block the loop
-            withWorkspace(task.workspace, () => this._run(task)).finally(() => {
+            void withWorkspace(task.workspace, () => this._run(task)).catch(error => {
+                log.error("Orbit no pudo guardar el estado de la tarea.", error);
+            }).finally(() => {
                 this.runningCount--;
                 this.processNext();
             });
@@ -113,24 +142,25 @@ class TaskQueue {
     private async _run(task: Task): Promise<void> {
         try {
             const result = await task.executor!.executeGoal(task.goal, (msg: string) => {
-                task.output.push(msg);
+                this.update(task, { output: [...task.output.slice(-99), msg.slice(0, 8000)] });
                 if (task.speak) task.speak(msg);
             });
 
             if (task.status === "cancelled") return;
-            task.status = "done";
-            task.result = result;
-            task.endedAt = new Date();
+            this.update(task, { status: "done", result, endedAt: new Date() });
             log.info(`Tarea completada: ${task.id}`);
             broadcast({ type: "task_done", id: task.id, result: result?.slice(0, 200) });
         } catch (e: any) {
             if (task.status === "cancelled") return;
-            task.status = "failed";
-            task.error = e.message;
-            task.endedAt = new Date();
+            this.update(task, { status: "failed", error: e.message, endedAt: new Date() });
             log.error(`Tarea fallida: ${task.id}`, e.message);
             broadcast({ type: "task_failed", id: task.id, error: e.message });
         }
+    }
+
+    private update(task: Task, changes: Partial<Task>): void {
+        this.store.save({ ...task, ...changes });
+        Object.assign(task, changes);
     }
 
     /**
@@ -139,8 +169,8 @@ class TaskQueue {
     pause(id: string): boolean {
         const task = this.tasks.get(id);
         if (!task || task.status !== "running" || !task.executor) return false;
+        this.update(task, { status: "paused" });
         task.executor.pause();
-        task.status = "paused";
         log.info(`Tarea pausada: ${id}`);
         broadcast({ type: "task_paused", id });
         return true;
@@ -152,8 +182,8 @@ class TaskQueue {
     resume(id: string): boolean {
         const task = this.tasks.get(id);
         if (!task || task.status !== "paused" || !task.executor) return false;
+        this.update(task, { status: "running" });
         task.executor.resume();
-        task.status = "running";
         log.info(`Tarea reanudada: ${id}`);
         broadcast({ type: "task_resumed", id });
         return true;
@@ -167,8 +197,7 @@ class TaskQueue {
         if (!task) return false;
 
         if (task.status === "pending") {
-            task.status = "cancelled";
-            task.endedAt = new Date();
+            this.update(task, { status: "cancelled", endedAt: new Date() });
             this.pending = this.pending.filter(entry => entry.id !== id);
             log.info(`Tarea cancelada (pendiente): ${id}`);
             broadcast({ type: "task_cancelled", id });
@@ -176,9 +205,8 @@ class TaskQueue {
         }
 
         if ((task.status === "running" || task.status === "paused") && task.executor) {
+            this.update(task, { status: "cancelled", endedAt: new Date() });
             task.executor.cancel();
-            task.status = "cancelled";
-            task.endedAt = new Date();
             log.info(`Tarea cancelada (en ejecución): ${id}`);
             broadcast({ type: "task_cancelled", id });
             return true;
@@ -241,6 +269,7 @@ class TaskQueue {
             const terminal = ["done", "failed", "cancelled"].includes(task.status);
             const age = task.endedAt ? now - task.endedAt.getTime() : 0;
             if (terminal && age > maxAgeMs) {
+                this.store.delete(id);
                 this.tasks.delete(id);
             }
         }

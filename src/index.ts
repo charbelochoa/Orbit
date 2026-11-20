@@ -32,6 +32,7 @@ import type { ChatMessage } from "./providers/types.js";
 import { buildProjectContext } from "./context/project-facts.js";
 import { skillRegistry } from "./skills/registry.js";
 import { policyEngine } from "./core/tool-policy.js";
+import { getQueue } from "./agent/task-queue.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = createLogger("Orbit");
@@ -277,6 +278,7 @@ async function main() {
     // Start gateway FIRST so it's ready when web UI connects
     await startGateway(announce, chat, voice, config.server);
     await startWebServer(config.server.webPort, config.server.gatewayPort);
+    getQueue().start();
     process.send?.({ type: "orbit-ready", ...config.server });
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));
