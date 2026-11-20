@@ -17,6 +17,7 @@ let overlayWindow = null;
 let tray = null;
 let backend = null;
 let isQuitting = false;
+let waitingForBackend = false;
 let gatewayWs = null;
 let contextPanelVisible = false;
 let webUrl = "";
@@ -630,16 +631,33 @@ app.on("activate", () => {
 
 app.on("window-all-closed", () => {});
 
-app.on("before-quit", () => {
-  log("Cerrando Orbit...");
+app.on("before-quit", event => {
   isQuitting = true;
   clearTimeout(restartTimer);
   globalShortcut.unregisterAll();
   if (gatewayWs) { try { gatewayWs.close(); } catch (_) {} gatewayWs = null; }
-  if (backend) {
-    if (backend.connected) backend.send({ type: "orbit-stop" }, error => { if (error) backend?.kill(); });
-    else backend.kill("SIGTERM");
-    setTimeout(() => { if (backend) backend.kill("SIGKILL"); }, 2000);
+
+  const child = backend;
+  if (!child) return;
+  event.preventDefault();
+  if (waitingForBackend) return;
+  waitingForBackend = true;
+  log("Cerrando Orbit...");
+
+  function finish() {
+    clearTimeout(deadline);
+    child.off("close", finish);
+    if (backend === child) backend = null;
+    app.quit();
+  }
+  const deadline = setTimeout(() => {
+    try { child.kill("SIGKILL"); } finally { finish(); }
+  }, 4000);
+  child.once("close", finish);
+  if (child.connected) {
+    child.send({ type: "orbit-stop" }, error => { if (error) child.kill(); });
+  } else {
+    child.kill();
   }
 });
 

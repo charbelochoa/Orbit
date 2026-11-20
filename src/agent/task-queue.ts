@@ -22,6 +22,7 @@ interface QueueEntry {
 }
 
 const PRIORITY_HEAD_START_MS = 15_000;
+const SHUTDOWN_GRACE_MS = 1_500;
 
 function compareQueueEntries(left: QueueEntry, right: QueueEntry): number {
     return (
@@ -53,7 +54,8 @@ class TaskQueue {
     private tasks = new Map<string, Task>();
     private pending: QueueEntry[] = [];
     private nextSequence = 0;
-    private runningCount = 0;
+    private readonly active = new Map<Task, Promise<void>>();
+    private closing = false;
     private maxConcurrent = 3;
     private readonly store = new TaskStore();
     private static instance: TaskQueue;
@@ -72,6 +74,32 @@ class TaskQueue {
 
     start(): void {
         this.processNext();
+    }
+
+    async stop(): Promise<void> {
+        if (this.closing) return;
+        this.closing = true;
+        const reason = new Error("Orbit se está cerrando. Puedes continuar esta tarea al volver a abrirlo.");
+        for (const task of this.active.keys()) task.executor?.suspend(reason);
+
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await Promise.race([
+                Promise.allSettled(this.active.values()),
+                new Promise<void>(resolve => { timer = setTimeout(resolve, SHUTDOWN_GRACE_MS); }),
+            ]);
+        } finally {
+            clearTimeout(timer);
+        }
+
+        for (const task of this.active.keys()) {
+            task.executor?.cancel(reason);
+            try {
+                this.markStopped(task);
+            } catch (error) {
+                log.error("Orbit no pudo persistir el cierre de la tarea.", error);
+            }
+        }
     }
 
     /**
@@ -116,7 +144,7 @@ class TaskQueue {
     }
 
     private processNext(): void {
-        while (this.runningCount < this.maxConcurrent && this.pending.length > 0) {
+        while (!this.closing && this.active.size < this.maxConcurrent && this.pending.length > 0) {
             const index = this.pending.findIndex(({ id }) => {
                 const dependency = this.tasks.get(id)?.dependsOn;
                 const previous = dependency && this.tasks.get(dependency);
@@ -140,28 +168,26 @@ class TaskQueue {
                 log.error("Orbit no pudo persistir el inicio de la tarea.", error);
                 return;
             }
-            this.runningCount++;
             task.executor = new AgentExecutor(id);
+            const run = Promise.resolve().then(() => withWorkspace(task.workspace, () => this._run(task))).catch(error => {
+                log.error("Orbit no pudo guardar el estado de la tarea.", error);
+            }).finally(() => {
+                this.active.delete(task);
+                this.processNext();
+            });
+            this.active.set(task, run);
 
             log.info(`Ejecutando tarea: ${id}`);
             broadcast({ type: "task_started", id });
 
             if (task.speak) task.speak(`Comenzando tarea: ${task.goal.slice(0, 50)}...`);
-
-            // Run async — don't block the loop
-            void withWorkspace(task.workspace, () => this._run(task)).catch(error => {
-                log.error("Orbit no pudo guardar el estado de la tarea.", error);
-            }).finally(() => {
-                this.runningCount--;
-                this.processNext();
-            });
         }
     }
 
     private async _run(task: Task): Promise<void> {
         try {
             const result = await task.executor!.executeGoal(task.goal, (msg: string) => {
-                if (task.status === "cancelled") return;
+                if (task.status !== "running" && task.status !== "paused") return;
                 this.update(task, { output: [...task.output.slice(-99), msg.slice(0, 8000)] });
                 if (task.speak) task.speak(msg);
             }, {
@@ -169,13 +195,17 @@ class TaskQueue {
                 save: checkpoint => this.update(task, { checkpoint }),
             });
 
-            if (task.status === "cancelled") return;
+            if (task.status !== "running" && task.status !== "paused") return;
             this.update(task, { status: "done", result, endedAt: new Date() });
             log.info(`Tarea completada: ${task.id}`);
             broadcast({ type: "task_complete", taskId: task.id, success: true, summary: result });
             broadcast({ type: "task_done", id: task.id, result: result?.slice(0, 200) });
         } catch (e) {
             if (task.status === "cancelled") return;
+            if (this.closing) {
+                this.markStopped(task);
+                return;
+            }
             const error = e instanceof Error ? e.message : String(e);
             const interrupted = Object.values(task.checkpoint?.states ?? {}).some(entry => entry?.state === "running");
             this.update(task, { status: interrupted ? "interrupted" : "failed", error, endedAt: new Date() });
@@ -183,6 +213,17 @@ class TaskQueue {
             broadcast({ type: interrupted ? "task_interrupted" : "task_failed", id: task.id, error });
         } finally {
             task.executor = undefined;
+        }
+    }
+
+    private markStopped(task: Task): void {
+        if (task.status !== "running" && task.status !== "paused") return;
+        if (task.checkpoint) {
+            const error = "Orbit se cerró durante la tarea. Puedes continuar desde el progreso guardado.";
+            this.update(task, { status: "interrupted", error, endedAt: new Date() });
+            broadcast({ type: "task_interrupted", id: task.id, error });
+        } else {
+            this.update(task, { status: "pending", startedAt: undefined });
         }
     }
 
@@ -218,6 +259,7 @@ class TaskQueue {
     }
 
     continueTask(id: string, retryInterrupted = false): "queued" | "needs_confirmation" | "unavailable" {
+        if (this.closing) return "unavailable";
         const task = this.tasks.get(id);
         const saved = task?.checkpoint;
         if (!task || task.status !== "interrupted" || !saved) return "unavailable";

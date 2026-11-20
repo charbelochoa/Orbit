@@ -246,6 +246,15 @@ export async function startGateway(
     return wss;
 }
 
+export function stopGateway(server: WebSocketServer): void {
+    server.close();
+    for (const client of clients.values()) {
+        client.turn?.abort(new Error("Orbit se está cerrando."));
+    }
+    clients.clear();
+    for (const ws of server.clients) ws.close(1001, "Orbit se está cerrando");
+}
+
 async function handleClientMessage(clientId: string, msg: any, speakFn: (text: string) => void, chat: ChatHandler, voice: VoiceHandler) {
     const client = clients.get(clientId);
     if (!client) return;

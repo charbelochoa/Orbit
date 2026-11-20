@@ -1,10 +1,11 @@
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync } from "./memory/memory-manager.js";
 import { addMessage, getHistory } from "./memory/chat-history.js";
-import { startGateway, broadcast, updateTokenUsage, onElectronConnected, type ChatTurn, type VoiceTurn } from "./gateway/server.js";
+import { startGateway, stopGateway, broadcast, updateTokenUsage, onElectronConnected, type ChatTurn, type VoiceTurn } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
 import { toolRegistry } from "./core/registry.js";
 import { getSystemPrompt } from "./core/prompt.js";
@@ -220,6 +221,41 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
 
 // Entry Point
 async function main() {
+    let closing = false;
+    let gateway: Awaited<ReturnType<typeof startGateway>> | undefined;
+    let webServer: Awaited<ReturnType<typeof startWebServer>> | undefined;
+    let queue: ReturnType<typeof getQueue> | undefined;
+
+    const stop = async () => {
+        if (closing) return;
+        closing = true;
+        log.info("Cerrando Orbit...");
+        try {
+            const suspended = queue?.stop();
+            if (gateway) stopGateway(gateway);
+            webServer?.close();
+            ruleEngine.stop();
+            notificationService.stop();
+            wakeWordMonitor.stop();
+            errorWatcher.stop();
+            const cleanup = Promise.allSettled([suspended, proactiveService.stop(), codebaseIndexer.stop(), ambientService.stop()]);
+            await Promise.race([cleanup, delay(2500)]);
+        } catch (error) {
+            log.error("Falló el cierre del agente.", error);
+        } finally {
+            killPS();
+            pythonEngine?.kill();
+            process.exit(0);
+        }
+    };
+
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    if (process.connected) process.on("disconnect", stop);
+    process.on("message", message => {
+        if (message && typeof message === "object" && "type" in message && message.type === "orbit-stop") void stop();
+    });
+
     console.log(`
 ╔══════════════════════════════════════╗
 ║     ORBIT AI  -  Local Assistant   ║
@@ -235,19 +271,19 @@ async function main() {
 
     // Load all plugins (Phase 3)
     await loadAllPlugins();
+    if (closing) return;
     log.info(`Plugins cargados: ${toolRegistry.count} tools disponibles.`);
 
     // Load all skills (Phase 5)
     await loadAllSkills();
+    if (closing) return;
 
     // Register built-in /commands (Phase 6)
     initAutoReply();
 
-    // Sprint 5: Proactive triggers (file watchers + cron schedules)
-    await proactiveService.start();
-
     // Sprint 9: Ambient Awareness Engine
     await ambientService.start();
+    if (closing) return;
 
     // Sprint 11: Rule Engine (context-aware proactive triggers)
     const patternsCfg = config.patterns;
@@ -269,6 +305,7 @@ async function main() {
     // Sprint 13: Codebase Semantic Index + Error Watcher
     if (config.codebase?.enabled) {
         await codebaseIndexer.start();
+        if (closing) return;
     }
     if (config.codebase?.errorWatcher?.enabled) {
         errorWatcher.start();
@@ -280,33 +317,24 @@ async function main() {
     // Phase 10: Memory auto-save every 5 minutes
 
     // Start gateway FIRST so it's ready when web UI connects
-    await startGateway(announce, chat, voice, config.server);
-    await startWebServer(config.server.webPort, config.server.gatewayPort);
-    getQueue().start();
-    process.send?.({ type: "orbit-ready", ...config.server });
+    gateway = await startGateway(announce, chat, voice, config.server);
+    if (closing) {
+        stopGateway(gateway);
+        return;
+    }
+    queue = getQueue();
+    webServer = await startWebServer(config.server.webPort, config.server.gatewayPort);
+    if (closing) {
+        webServer.close();
+        return;
+    }
+    await proactiveService.start();
+    if (closing) return;
+    queue.start();
+    if (process.connected) process.send?.({ type: "orbit-ready", ...config.server });
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));
     if (process.env.ORBIT_VISION_ENGINE === "1") startPythonEngine();
-
-    const stop = () => {
-        log.info("Cerrando Orbit...");
-        proactiveService.stop();
-        ruleEngine.stop();
-        notificationService.stop();
-        wakeWordMonitor.stop();
-        errorWatcher.stop();
-        void codebaseIndexer.stop();
-        ambientService.stop();
-        killPS();
-        if (pythonEngine) pythonEngine.kill();
-        process.exit(0);
-    };
-    process.on("SIGINT", stop);
-    process.on("SIGTERM", stop);
-    if (process.connected) process.on("disconnect", stop);
-    process.on("message", message => {
-        if (message && typeof message === "object" && "type" in message && message.type === "orbit-stop") stop();
-    });
 }
 
 main().catch((e) => {
