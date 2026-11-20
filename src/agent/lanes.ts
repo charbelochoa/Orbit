@@ -1,108 +1,131 @@
-/**
- * Orbit Execution Lanes
- * Phase 4.2 — Semaphore-based concurrency control.
- * Prevents runaway parallel execution and callback storms.
- * Inspired by OpenClaw's lanes.ts.
- */
+import { toolRegistry } from "../core/registry.js";
 
-import { createLogger } from "../infra/logger.js";
+type Release = () => void;
 
-const log = createLogger("Lanes");
+interface QueueEntry {
+    queued: boolean;
+    previous?: QueueEntry;
+    next?: QueueEntry;
+    releaseQueuedAbort?: () => void;
+    resolve: (release: Release) => void;
+}
 
-// ── Semaphore ─────────────────────────────────────────────────────────────────
+interface QueueFifo {
+    head?: QueueEntry;
+    tail?: QueueEntry;
+    length: number;
+}
+
+function appendEntry(fifo: QueueFifo, entry: QueueEntry): void {
+    entry.queued = true;
+    entry.previous = fifo.tail;
+    entry.next = undefined;
+    if (fifo.tail) {
+        fifo.tail.next = entry;
+    } else {
+        fifo.head = entry;
+    }
+    fifo.tail = entry;
+    fifo.length += 1;
+}
+
+function removeLaneQueueEntry(fifo: QueueFifo, entry: QueueEntry): boolean {
+    if (!entry.queued) return false;
+    if (entry.previous) {
+        entry.previous.next = entry.next;
+    } else {
+        fifo.head = entry.next;
+    }
+    if (entry.next) {
+        entry.next.previous = entry.previous;
+    } else {
+        fifo.tail = entry.previous;
+    }
+    entry.queued = false;
+    fifo.length -= 1;
+    const releaseQueuedAbort = entry.releaseQueuedAbort;
+    entry.previous = undefined;
+    entry.next = undefined;
+    entry.releaseQueuedAbort = undefined;
+    releaseQueuedAbort?.();
+    return true;
+}
 
 class Semaphore {
-    private _count:   number;
-    private _waiting: Array<() => void> = [];
+    private readonly queue: QueueFifo = { length: 0 };
+    private active = 0;
 
-    constructor(max: number) {
-        this._count = max;
+    constructor(private readonly capacity: number) {}
+
+    acquire(signal?: AbortSignal): Promise<Release> {
+        signal?.throwIfAborted();
+        if (this.active < this.capacity) {
+            this.active++;
+            return Promise.resolve(this.release);
+        }
+        return new Promise((resolve, reject) => {
+            const entry: QueueEntry = { queued: false, resolve };
+            if (signal) {
+                const abort = () => {
+                    if (removeLaneQueueEntry(this.queue, entry)) reject(signal.reason);
+                };
+                signal.addEventListener("abort", abort, { once: true });
+                entry.releaseQueuedAbort = () => signal.removeEventListener("abort", abort);
+            }
+            appendEntry(this.queue, entry);
+        });
     }
 
-    async acquire(): Promise<void> {
-        if (this._count > 0) {
-            this._count--;
+    private release = (): void => {
+        const next = this.queue.head;
+        if (!next) {
+            this.active--;
             return;
         }
-        return new Promise(resolve => this._waiting.push(resolve));
-    }
+        removeLaneQueueEntry(this.queue, next);
+        next.resolve(this.release);
+    };
 
-    release(): void {
-        const next = this._waiting.shift();
-        if (next) {
-            next();
-        } else {
-            this._count++;
-        }
-    }
-
-    get available(): number { return this._count; }
-    get waiting():   number { return this._waiting.length; }
+    get idle(): boolean { return this.active === 0 && this.queue.length === 0; }
+    get available(): number { return this.capacity - this.active; }
+    get waiting(): number { return this.queue.length; }
 }
 
-// ── Lane limits ───────────────────────────────────────────────────────────────
-
-const GLOBAL_CONCURRENCY    = 6;   // max inflight tool calls globally
-const PER_SESSION_CONCURRENCY = 3; // max per session/subagent
-
-const globalLane = new Semaphore(GLOBAL_CONCURRENCY);
+const globalLane = new Semaphore(6);
+const desktopLane = new Semaphore(1);
 const sessionLanes = new Map<string, Semaphore>();
 
-function getSessionLane(sessionId: string): Semaphore {
-    if (!sessionLanes.has(sessionId)) {
-        sessionLanes.set(sessionId, new Semaphore(PER_SESSION_CONCURRENCY));
-    }
-    return sessionLanes.get(sessionId)!;
-}
-
-function removeSessionLane(sessionId: string): void {
-    sessionLanes.delete(sessionId);
-}
-
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/**
- * Execute fn inside the global + per-session lanes.
- * Blocks until a slot is available in both.
- */
 export async function runInLane<T>(
     sessionId: string,
-    fn: () => Promise<T>
+    work: () => Promise<T>,
+    signal?: AbortSignal,
+    toolName?: string,
 ): Promise<T> {
-    const sessionLane = getSessionLane(sessionId);
-
-    await globalLane.acquire();
-    await sessionLane.acquire();
-
-    log.debug(`[${sessionId}] Lane acquired. Global slots: ${globalLane.available}, Session slots: ${sessionLane.available}`);
-
+    const sessionLane = sessionLanes.get(sessionId) ?? new Semaphore(3);
+    sessionLanes.set(sessionId, sessionLane);
+    let releaseSession: Release | undefined;
+    let releaseDesktop: Release | undefined;
+    let releaseGlobal: Release | undefined;
     try {
-        return await fn();
+        releaseSession = await sessionLane.acquire(signal);
+        if (toolName && (toolName === "browser_control" || toolRegistry.get(toolName)?.capabilities.requiresUI)) {
+            releaseDesktop = await desktopLane.acquire(signal);
+        }
+        releaseGlobal = await globalLane.acquire(signal);
+        signal?.throwIfAborted();
+        return await work();
     } finally {
-        sessionLane.release();
-        globalLane.release();
-        log.debug(`[${sessionId}] Lane released.`);
+        releaseGlobal?.();
+        releaseDesktop?.();
+        releaseSession?.();
+        destroySessionLane(sessionId);
     }
 }
 
-/**
- * Clean up lane resources for a session when it ends.
- */
 export function destroySessionLane(sessionId: string): void {
-    removeSessionLane(sessionId);
+    if (sessionLanes.get(sessionId)?.idle) sessionLanes.delete(sessionId);
 }
 
-/**
- * Get current lane stats (for debugging/UI).
- */
-export function getLaneStats(): {
-    globalAvailable: number;
-    globalWaiting: number;
-    sessions: number;
-} {
-    return {
-        globalAvailable: globalLane.available,
-        globalWaiting:   globalLane.waiting,
-        sessions:        sessionLanes.size,
-    };
+export function getLaneStats() {
+    return { globalAvailable: globalLane.available, globalWaiting: globalLane.waiting, sessions: sessionLanes.size };
 }

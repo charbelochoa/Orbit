@@ -119,7 +119,7 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
                 ...params,
                 signal: AbortSignal.any([deadline, AbortSignal.timeout(45_000)]),
             }, provider),
-            execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline)),
+            execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name),
             onTool: (name, result) => {
                 if (result === undefined) {
                     send({ type: "tool_call", tool: name, args: {} });
@@ -170,7 +170,7 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
                 send({ type: "tool_call", tool: name, args: {} });
                 send({ type: "typing", state: "executing", tool: name });
                 try {
-                    const output = await runInLane(sessionId, () => executeTool(name, args, deadline));
+                    const output = await runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name);
                     send({ type: "tool_result", tool: name, result: output.slice(0, 1500) });
                     return output;
                 } catch (error) {
