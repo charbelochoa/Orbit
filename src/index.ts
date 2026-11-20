@@ -9,6 +9,7 @@ import { startGateway, stopGateway, broadcast, updateTokenUsage, onElectronConne
 import { startWebServer } from "./ui/web-server.js";
 import { toolRegistry } from "./core/registry.js";
 import { getSystemPrompt } from "./core/prompt.js";
+import { getToolFailure } from "./core/orbit-error.js";
 import { runVoiceTurn } from "./core/voice.js";
 import { executeTool } from "./actions/index.js";
 import { stopDesktopInput } from "./actions/ps-bridge.js";
@@ -185,13 +186,14 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
                 name: tool.id, description: tool.description, parameters: tool.parameters,
             })),
             onAudio: (pcm, sampleRate) => send({ type: "voice_audio", pcm, sampleRate }),
+            onInterrupt: () => send({ type: "voice_interrupted" }),
             onUsage: updateTokenUsage,
             execute: async (name, args, toolSignal) => {
                 send({ type: "tool_call", tool: name, args: {} });
                 send({ type: "typing", state: "executing", tool: name });
                 try {
                     const output = await runInLane(sessionId, () => executeTool(name, args, toolSignal, sessionId), toolSignal, name);
-                    send({ type: "tool_result", tool: name, result: output.slice(0, 1500) });
+                    send({ type: "tool_result", tool: name, error: Boolean(getToolFailure(output)), result: output.slice(0, 1500) });
                     return output;
                 } catch (error) {
                     const output = toolSignal.aborted ? "Acción cancelada." : error instanceof Error ? error.message : String(error);

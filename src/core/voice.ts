@@ -13,6 +13,7 @@ interface VoiceOptions {
     tools: FunctionDeclaration[];
     signal: AbortSignal;
     onAudio: (data: string, sampleRate: number) => void;
+    onInterrupt: () => void;
     onUsage: (input: number, output: number) => void;
     execute: (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<string>;
 }
@@ -60,6 +61,10 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
         if (signal.aborted) return;
         const content = message.serverContent;
         if (content) {
+            if (content.interrupted) {
+                assistant = "";
+                options.onInterrupt();
+            }
             user += content.inputTranscription?.text || "";
             assistant += content.outputTranscription?.text || "";
             for (const part of content.modelTurn?.parts || []) {
@@ -133,7 +138,7 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
                 void pendingMessages.catch(rejectTurn);
             },
             onerror: () => rejectTurn(new Error("Gemini Live no pudo continuar la sesión de voz.")),
-            onclose: () => rejectTurn(new Error("Gemini Live cerró la sesión de voz.")),
+            onclose: event => rejectTurn(new Error(`Gemini Live cerró la sesión de voz (${event.code}).`)),
         },
     }).then(async connection => {
         if (finished || signal.aborted) {

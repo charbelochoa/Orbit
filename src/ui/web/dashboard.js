@@ -213,6 +213,7 @@ function handle(msg){
     case 'orbit_message':showThinking(false);finishStream();saveChatMessage('orbit',msg.text);addOrbitBubble(msg.text);setStatus('');setSendMode(false);break;
     case 'orbit_chunk':showThinking(false);appendChunk(msg.text);break;
     case 'voice_audio':if(soundsEnabled)orbitAudio.play(msg.pcm,msg.sampleRate);break;
+    case 'voice_interrupted':orbitAudio.stopPlayback();break;
     case 'audio_started':acceptVoiceTurn(msg.requestId);break;
     case 'turn_complete':if(voiceTurn&&msg.requestId===voiceTurn.id)clearVoiceTurn(msg.success===false);finishStream();showThinking(false);if(!g('status-bar').classList.contains('err'))setStatus('');setSendMode(false);break;
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
@@ -457,7 +458,7 @@ function finalizeToolEvent(name,ok,result){var ev=toolEvs.find(function(e){retur
 function renderToolEvs(){var panel=g('view-tools'),empty=g('tools-empty');panel.querySelectorAll('.tool-event').forEach(function(el){el.remove();});empty.style.display=toolEvs.length?'none':'block';toolEvs.slice(0,80).forEach(function(ev){var el=document.createElement('div');el.className='tool-event'+(ev.state==='done'?' done':ev.state==='failed'?' failed':'');var dur=ev.duration!=null?'<span class="tool-ev-dur">'+relMs(ev.duration)+'</span>':'';var preview=ev.result?(typeof ev.result==='string'?ev.result:JSON.stringify(ev.result)):null;if(preview&&preview.length>260)preview=preview.slice(0,260)+'...';el.innerHTML='<div class="tool-event-header"><span class="tool-ev-dot"></span><span class="tool-ev-name">'+esc(ev.name)+'</span>'+dur+'<span class="tool-ev-time">'+new Date(ev.start).toLocaleTimeString()+'</span></div>'+(preview?'<div class="tool-ev-result">'+esc(preview)+'</div>':'');panel.insertBefore(el,empty);});}
 
 const orbitAudio = new OrbitAudio();
-const voiceMessages = new Set(['voice_audio', 'turn_complete', 'typing', 'user_message', 'orbit_message', 'error', 'tool_call', 'tool_result']);
+const voiceMessages = new Set(['voice_audio', 'voice_interrupted', 'turn_complete', 'typing', 'user_message', 'orbit_message', 'error', 'tool_call', 'tool_result']);
 let voiceConfigured = null;
 let voiceTurn = null;
 const soundsEnabled = true;
@@ -481,7 +482,11 @@ g('mic-btn').addEventListener('click', async function() {
   setSendMode(true);
   setStatus('Abriendo micrófono...');
   try {
-    const started = await orbitAudio.start(pcm => queueVoiceFrame(turn, pcm), () => stopVoice(true));
+    const started = await orbitAudio.start(pcm => queueVoiceFrame(turn, pcm), () => stopVoice(true), () => {
+      if (voiceTurn !== turn) return;
+      stopVoice(false);
+      setStatus('Se perdió el acceso al micrófono.', 'err');
+    });
     if (!started || voiceTurn !== turn || document.hidden || ws !== turn.socket || ws?.readyState !== WebSocket.OPEN) {
       if (voiceTurn === turn) stopVoice(false);
       else if (started) orbitAudio.stop();

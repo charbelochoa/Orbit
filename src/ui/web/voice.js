@@ -6,7 +6,7 @@ class OrbitAudio {
     this.starting = false;
   }
 
-  async start(onChunk, onLimit) {
+  async start(onChunk, onLimit, onDeviceLost) {
     if (this.capture || this.starting) return false;
     this.starting = true;
     this.stopPlayback();
@@ -26,6 +26,9 @@ class OrbitAudio {
       silence.gain.value = 0;
       const capture = { stream, context, source, node, silence, chunks: [], samples: 0, pending: 0, onChunk };
       this.capture = capture;
+      const lost = () => { if (this.capture === capture) onDeviceLost(); };
+      node.onprocessorerror = lost;
+      stream.getAudioTracks().forEach(track => { track.onended = lost; });
       node.port.onmessage = ({ data }) => {
         if (this.capture !== capture) return;
         if (data === 'flushed') {
@@ -57,11 +60,12 @@ class OrbitAudio {
     if (!capture) return;
     this.capture = null;
     capture.completeTail?.();
+    capture.node.onprocessorerror = null;
     capture.node.port.close();
     capture.source.disconnect();
     capture.node.disconnect();
     capture.silence.disconnect();
-    capture.stream.getTracks().forEach(track => track.stop());
+    capture.stream.getTracks().forEach(track => { track.onended = null; track.stop(); });
     void capture.context.close().catch(() => {});
     if (flush) this.flush(capture);
   }
