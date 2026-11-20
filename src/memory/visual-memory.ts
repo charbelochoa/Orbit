@@ -281,7 +281,7 @@ export function pruneOldEntries(): number {
     const db = openDb();
     try {
         const result = db.prepare("DELETE FROM visual_screenshots WHERE timestamp < ?").run(cutoff);
-        const deleted = result.changes;
+        const deleted = Number(result.changes);
         if (deleted > 0) log.info(`Visual memory: eliminadas ${deleted} entradas antiguas (>${days}d)`);
         return deleted;
     } finally {
