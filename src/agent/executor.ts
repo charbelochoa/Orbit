@@ -9,13 +9,16 @@ import { getContextEngine } from "../context/registry.js";
 import { OrbitToolError, getToolFailure } from "../core/orbit-error.js";
 import { IterationBudget } from "./iteration-budget.js";
 import { toolRegistry } from "../core/registry.js";
+import { summarizeTaskSteps, type TaskCheckpoint, type TaskStepState, type TaskStepResult } from "./task-checkpoint.js";
 
-interface StepResult {
+interface StepResult extends TaskStepResult {
     stepId: number;
     tool: string;
-    success: boolean;
-    output: string;
-    abort?: boolean;
+}
+
+interface TaskJournal {
+    checkpoint?: TaskCheckpoint;
+    save: (checkpoint: TaskCheckpoint) => void;
 }
 
 const MAX_ATTEMPTS = 3;
@@ -43,39 +46,76 @@ export class AgentExecutor {
         this.resumeExecution = undefined;
     }
 
-    async executeGoal(goal: string, onProgress?: (message: string) => void): Promise<string> {
+    async executeGoal(goal: string, onProgress?: (message: string) => void, journal?: TaskJournal): Promise<string> {
         const signal = this.controller.signal;
         const taskId = this.sessionId;
-        const { steps } = await createPlan(goal, "", AbortSignal.any([signal, AbortSignal.timeout(180_000)]));
+        let checkpoint: TaskCheckpoint = journal?.checkpoint ?? {
+            steps: (await createPlan(goal, "", AbortSignal.any([signal, AbortSignal.timeout(180_000)]))).steps,
+            states: {},
+        };
+        signal.throwIfAborted();
+        if (Object.values(checkpoint.states).some(entry => entry?.state === "running")) {
+            throw new Error("Confirma el reintento de los pasos interrumpidos para continuar.");
+        }
+        if (!journal?.checkpoint) journal?.save(checkpoint);
+
+        const { steps } = checkpoint;
         const remaining = new Map(steps.map(step => [step.step, step]));
         const results = new Map<number, StepResult>();
         const outputs = new Map<string, string>();
-        broadcast({ type: "task_plan", taskId, goal, steps: steps.map(({ step, tool, description }) => ({ step, tool, description })) });
+        const saveStep = (stepId: number, entry: TaskStepState) => {
+            const next = { steps, states: { ...checkpoint.states, [stepId]: entry } };
+            journal?.save(next);
+            checkpoint = next;
+        };
+        const sendProgress = () => {
+            const settled = Object.values(checkpoint.states).filter(entry => entry?.state === "settled").length;
+            broadcast({ type: "task_progress", taskId, progress: Math.round(100 * settled / steps.length) });
+        };
+        broadcast({ type: "task_plan", taskId, goal, steps: summarizeTaskSteps(checkpoint) });
+        sendProgress();
 
-        while (remaining.size) {
+        let aborted = false;
+        while (remaining.size && !aborted) {
             await this.resumeGate;
             signal.throwIfAborted();
             const ready = [...remaining.values()].filter(step => step.dependsOn.every(id => results.has(id)));
             if (!ready.length) throw new Error("El plan quedó sin pasos ejecutables.");
-            const wave = await Promise.all(ready.map(step => {
-                if (step.dependsOn.some(id => !results.get(id)?.success)) {
-                    const skipped = this.failure(step, "Un paso previo no terminó correctamente.");
-                    broadcast({ type: "task_step_error", taskId, step: step.step, tool: step.tool, error: skipped.output });
-                    return skipped;
+            const wave = await Promise.allSettled(ready.map(async step => {
+                const saved = checkpoint.states[step.step];
+                if (saved?.state === "settled") {
+                    const { success, output, abort } = saved;
+                    return { stepId: step.step, tool: step.tool, success, output, abort };
                 }
-                return this.runStep(step, outputs, goal, onProgress);
+                let result: StepResult;
+                if (step.dependsOn.some(id => !results.get(id)?.success)) {
+                    result = this.failure(step, "Un paso previo no terminó correctamente.");
+                } else {
+                    saveStep(step.step, { state: "running" });
+                    broadcast({ type: "task_step_started", taskId, step: step.step });
+                    result = await this.runStep(step, outputs, goal, onProgress);
+                }
+                saveStep(step.step, { state: "settled", success: result.success, output: result.output, abort: result.abort });
+                if (result.success) {
+                    broadcast({ type: "task_step_done", taskId, step: step.step, tool: step.tool, success: true });
+                } else {
+                    broadcast({ type: "task_step_error", taskId, step: step.step, tool: step.tool, error: result.output });
+                }
+                return result;
             }));
             signal.throwIfAborted();
-            for (const result of wave) {
+            for (const settled of wave) {
+                if (settled.status === "rejected") throw settled.reason;
+                const result = settled.value;
                 remaining.delete(result.stepId);
                 results.set(result.stepId, result);
                 if (result.success) {
                     outputs.set(result.tool, result.output);
                     outputs.set(`step_${result.stepId}`, result.output);
                 }
+                aborted ||= Boolean(result.abort);
             }
-            broadcast({ type: "task_progress", taskId, progress: Math.round(100 * results.size / steps.length) });
-            if (wave.some(result => result.abort)) break;
+            sendProgress();
         }
 
         const report = [...results.values()];
@@ -83,7 +123,7 @@ export class AgentExecutor {
         const success = completed === steps.length;
         const summary = await this.summarize(goal, report, steps.length);
         signal.throwIfAborted();
-        broadcast({ type: "task_complete", taskId, success, summary });
+        if (!journal) broadcast({ type: "task_complete", taskId, success, summary });
         if (onProgress) onProgress(summary);
 
         try {
@@ -118,7 +158,6 @@ export class AgentExecutor {
                 const output = await runInLane(taskId, () => executeTool(step.tool, parameters, signal), signal, step.tool);
                 const failure = getToolFailure(output);
                 if (failure) throw failure;
-                broadcast({ type: "task_step_done", taskId, step: step.step, tool: step.tool, success: true });
                 return { stepId: step.step, tool: step.tool, success: true, output };
             } catch (error) {
                 signal.throwIfAborted();
@@ -132,7 +171,6 @@ export class AgentExecutor {
                         continue;
                     }
                 }
-                broadcast({ type: "task_step_error", taskId, step: step.step, tool: step.tool, error: message });
                 return this.failure(step, message, denied);
             }
         }

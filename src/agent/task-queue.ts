@@ -161,19 +161,28 @@ class TaskQueue {
     private async _run(task: Task): Promise<void> {
         try {
             const result = await task.executor!.executeGoal(task.goal, (msg: string) => {
+                if (task.status === "cancelled") return;
                 this.update(task, { output: [...task.output.slice(-99), msg.slice(0, 8000)] });
                 if (task.speak) task.speak(msg);
+            }, {
+                checkpoint: task.checkpoint,
+                save: checkpoint => this.update(task, { checkpoint }),
             });
 
             if (task.status === "cancelled") return;
             this.update(task, { status: "done", result, endedAt: new Date() });
             log.info(`Tarea completada: ${task.id}`);
+            broadcast({ type: "task_complete", taskId: task.id, success: true, summary: result });
             broadcast({ type: "task_done", id: task.id, result: result?.slice(0, 200) });
-        } catch (e: any) {
+        } catch (e) {
             if (task.status === "cancelled") return;
-            this.update(task, { status: "failed", error: e.message, endedAt: new Date() });
-            log.error(`Tarea fallida: ${task.id}`, e.message);
-            broadcast({ type: "task_failed", id: task.id, error: e.message });
+            const error = e instanceof Error ? e.message : String(e);
+            const interrupted = Object.values(task.checkpoint?.states ?? {}).some(entry => entry?.state === "running");
+            this.update(task, { status: interrupted ? "interrupted" : "failed", error, endedAt: new Date() });
+            log.error(`Ejecución de tarea detenida: ${task.id}`, error);
+            broadcast({ type: interrupted ? "task_interrupted" : "task_failed", id: task.id, error });
+        } finally {
+            task.executor = undefined;
         }
     }
 
