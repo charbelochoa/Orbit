@@ -58,6 +58,8 @@ class TaskQueue {
     private tasks = new Map<string, Task>();
     private pending: QueueEntry[] = [];
     private nextSequence = 0;
+    private admissionRetry?: ReturnType<typeof setTimeout>;
+    private admissionAttempts = 0;
     private readonly active = new Map<Task, Promise<void>>();
     private closing = false;
     private maxConcurrent = 3;
@@ -83,6 +85,8 @@ class TaskQueue {
     async stop(): Promise<void> {
         if (this.closing) return;
         this.closing = true;
+        clearTimeout(this.admissionRetry);
+        this.admissionRetry = undefined;
         const reason = new Error("Orbit se está cerrando. Puedes continuar esta tarea al volver a abrirlo.");
         for (const task of this.active.keys()) task.executor?.suspend(reason);
 
@@ -149,6 +153,7 @@ class TaskQueue {
     }
 
     private processNext(): void {
+        if (this.admissionRetry) return;
         while (!this.closing && this.active.size < this.maxConcurrent && this.pending.length > 0) {
             const index = this.pending.findIndex(({ id }) => {
                 const dependency = this.tasks.get(id)?.dependsOn;
@@ -164,15 +169,17 @@ class TaskQueue {
                 if (task.dependsOn && this.tasks.get(task.dependsOn)?.status !== "done") {
                     const error = "No se completó la tarea anterior de este flujo.";
                     this.update(task, { status: "failed", endedAt: new Date(), error });
+                    this.admissionAttempts = 0;
                     broadcast({ type: "task_failed", id, error });
                     continue;
                 }
                 this.update(task, {
                     status: "running", startedAt: new Date(), checkpoint: task.checkpoint ?? PLANNING_CHECKPOINT,
                 });
+                this.admissionAttempts = 0;
             } catch (error) {
                 this.enqueue(task);
-                log.error("Orbit no pudo persistir el inicio de la tarea.", error);
+                this.scheduleAdmissionRetry(error);
                 return;
             }
             task.executor = new AgentExecutor(id);
@@ -191,6 +198,17 @@ class TaskQueue {
 
             if (task.speak) task.speak(`Comenzando tarea: ${task.goal.slice(0, 50)}...`);
         }
+    }
+
+    private scheduleAdmissionRetry(error: unknown): void {
+        const attempts = ++this.admissionAttempts;
+        if (attempts === 1 || attempts === 5) log.error("Orbit no pudo guardar el inicio de la tarea. Volverá a intentarlo.", error);
+        const delay = Math.min(30_000, 1_000 * 2 ** Math.min(attempts - 1, 5));
+        this.admissionRetry = setTimeout(() => {
+            this.admissionRetry = undefined;
+            this.processNext();
+        }, delay);
+        this.admissionRetry.unref();
     }
 
     private async _run(task: Task): Promise<void> {
