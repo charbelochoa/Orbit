@@ -320,7 +320,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
         }
 
         case "status": {
-            const tasks = getQueue().listAll();
+            const tasks = getQueue().listAll(true);
             const provider = providerRegistry.getActiveInfo();
             client.ws.send(JSON.stringify({
                 type: "status",
@@ -411,6 +411,15 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             const taskId = payload?.id as string;
             const ok = taskId ? getQueue().resume(taskId) : false;
             client.ws.send(JSON.stringify({ type: "task_resume_ack", id: taskId, ok }));
+            break;
+        }
+
+        case "task_continue": {
+            const id = payload?.id;
+            const outcome = typeof id === "string"
+                ? getQueue().continueTask(id, payload?.retryInterrupted === true)
+                : "unavailable";
+            client.ws.send(JSON.stringify({ type: "task_continue_ack", id, outcome }));
             break;
         }
 

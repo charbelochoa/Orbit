@@ -15,6 +15,7 @@ export const statusCommand: CommandHandler = async (ctx) => {
     const running = tasks.filter(t => t.status === "running").length;
     const done    = tasks.filter(t => t.status === "done").length;
     const failed  = tasks.filter(t => t.status === "failed").length;
+    const interrupted = tasks.filter(t => t.status === "interrupted");
 
     // Send structured data so the UI can render it properly
     ctx.sendReply({
@@ -37,5 +38,6 @@ export const statusCommand: CommandHandler = async (ctx) => {
         `🔧 Tools registradas: ${toolRegistry.count}`,
         `📚 Skills cargados:   ${skillRegistry.count}`,
         `📋 Tareas: ${pending} pendientes | ${running} activas | ${done} completadas | ${failed} fallidas`,
+        ...interrupted.map(task => `Interrumpida ${task.id} · ${task.goal}`),
     ].join("\n");
 };

@@ -4,7 +4,7 @@ import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 import { withWorkspace, workspaceRoot } from "../core/workspace.js";
 import { TaskStore } from "./task-store.js";
-import type { TaskCheckpoint } from "./task-checkpoint.js";
+import { summarizeTaskSteps, type TaskCheckpoint } from "./task-checkpoint.js";
 
 const log = createLogger("TaskQueue");
 
@@ -217,6 +217,25 @@ class TaskQueue {
         return true;
     }
 
+    continueTask(id: string, retryInterrupted = false): "queued" | "needs_confirmation" | "unavailable" {
+        const task = this.tasks.get(id);
+        const saved = task?.checkpoint;
+        if (!task || task.status !== "interrupted" || !saved) return "unavailable";
+        const states = Object.entries(saved.states);
+        if (!retryInterrupted && states.some(([, entry]) => entry?.state === "running")) {
+            return "needs_confirmation";
+        }
+        const checkpoint: TaskCheckpoint = {
+            steps: saved.steps,
+            states: Object.fromEntries(states.filter(([, entry]) => entry?.state === "settled")),
+        };
+        this.update(task, { checkpoint, status: "pending", endedAt: undefined, error: undefined });
+        this.enqueue(task);
+        broadcast({ type: "task_requeued", id, steps: summarizeTaskSteps(checkpoint) });
+        this.processNext();
+        return "queued";
+    }
+
     /**
      * Cancel a running or pending task.
      */
@@ -224,7 +243,7 @@ class TaskQueue {
         const task = this.tasks.get(id);
         if (!task) return false;
 
-        if (task.status === "pending") {
+        if (task.status === "pending" || task.status === "interrupted") {
             this.update(task, { status: "cancelled", endedAt: new Date() });
             this.pending = this.pending.filter(entry => entry.id !== id);
             log.info(`Tarea cancelada (pendiente): ${id}`);
@@ -279,7 +298,7 @@ class TaskQueue {
     /**
      * List all tasks.
      */
-    listAll() {
+    listAll(includeSteps = false) {
         return Array.from(this.tasks.values()).map(t => ({
             id: t.id,
             goal: t.goal.slice(0, 80),
@@ -288,6 +307,7 @@ class TaskQueue {
             createdAt: t.createdAt.toISOString(),
             result: t.result?.slice(0, 1000),
             error: t.error?.slice(0, 1000),
+            steps: includeSteps ? summarizeTaskSteps(t.checkpoint) : undefined,
         }));
     }
 

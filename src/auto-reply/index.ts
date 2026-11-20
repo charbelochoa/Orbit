@@ -14,6 +14,7 @@ import { memoryCommand }   from "./commands/memory.js";
 import { skillsCommand }   from "./commands/skills.js";
 import { statusCommand }   from "./commands/status.js";
 import { cancelCommand }   from "./commands/cancel.js";
+import { resumeCommand }   from "./commands/resume.js";
 import { modelCommand }    from "./commands/model.js";
 import { daemonCommand }   from "./commands/daemon.js";
 import { initCommand }     from "./commands/init.js";
@@ -107,6 +108,13 @@ export function initAutoReply(): void {
         description: "Cancela una tarea en ejecución",
         usage:       "/cancel <taskId>",
         handler:     cancelCommand,
+    });
+
+    commandRegistry.register({
+        name:        "resume",
+        description: "Continúa una tarea interrumpida",
+        usage:       "/resume <id> [--retry-interrupted]",
+        handler:     resumeCommand,
     });
 
     commandRegistry.register({
