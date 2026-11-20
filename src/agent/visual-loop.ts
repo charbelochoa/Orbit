@@ -18,7 +18,8 @@ import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 import { getConfig } from "../config/config.js";
 import { computerControl } from "../actions/computer-control.js";
-import { getScreenSize, getCursorPos } from "../actions/ps-bridge.js";
+import { desktopPoint, dragPointer, getScreenSize } from "../actions/ps-bridge.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { buildVisualSystemPrompt } from "./visual-prompt.js";
 import { parseVisualAction } from "./vision-action-parser.js";
 import type { ChatMessage } from "../providers/types.js";
@@ -35,11 +36,12 @@ const log = createLogger("visual-loop");
 
 // ── Screenshot helpers ───────────────────────────────────────────────────────
 
-async function captureScreenshot(): Promise<{ base64: string; display: DisplayInfo }> {
+async function captureScreenshot(signal?: AbortSignal): Promise<{ base64: string; display: DisplayInfo }> {
     const buffer = await captureDesktopPng();
+    signal?.throwIfAborted();
     const base64 = buffer.toString("base64");
     const dims = pngDimensions(buffer);
-    const [logW, logH] = await getScreenSize();
+    const [logW, logH] = await getScreenSize(signal);
     const physW = dims.width || logW;
     const physH = dims.height || logH;
 
@@ -61,40 +63,25 @@ async function captureScreenshot(): Promise<{ base64: string; display: DisplayIn
  * Map a VisualAction to an existing Orbit tool call.
  * Returns the tool output string.
  */
-async function executeVisualAction(action: VisualAction, display: DisplayInfo): Promise<string> {
+async function executeVisualAction(action: VisualAction, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     switch (action.action) {
         case "click":
-            return computerControl({ action: "click", x: action.x, y: action.y });
         case "double_click":
-            return computerControl({ action: "double_click", x: action.x, y: action.y });
         case "right_click":
-            return computerControl({ action: "right_click", x: action.x, y: action.y });
         case "type":
-            return computerControl({ action: "type", text: action.text || "" });
         case "hotkey":
-            return computerControl({ action: "hotkey", keys: action.keys || "" });
         case "scroll":
-            return computerControl({
-                action: "scroll",
-                direction: action.direction || "down",
-                amount: action.amount ?? 3,
-            });
-        case "drag": {
-            // move to start, mouse down, move to end, mouse up
-            await computerControl({ action: "click", x: action.x, y: action.y });
-            // Use PS bridge drag: mouseDown at start, bezier move to end, mouseUp
-            const { runPS, buildBezierScript } = await import("../actions/ps-bridge.js");
-            const startX = action.x ?? 0;
-            const startY = action.y ?? 0;
-            const endX = action.endX ?? startX;
-            const endY = action.endY ?? startY;
-            await runPS(`[OrbitInput]::MouseDown(); ${buildBezierScript(startX, startY, endX, endY)} [OrbitInput]::MouseUp()`);
-            return `Drag from (${startX},${startY}) to (${endX},${endY})`;
-        }
         case "move":
-            return computerControl({ action: "move", x: action.x, y: action.y });
+            return computerControl(action, signal);
+        case "drag": {
+            const from = desktopPoint(action.x, action.y);
+            const to = desktopPoint(action.endX, action.endY);
+            await dragPointer(to, from, signal);
+            return `Arrastre completado de (${from.join(", ")}) a (${to.join(", ")}).`;
+        }
         case "wait":
-            await new Promise(r => setTimeout(r, 2000));
+            await delay(2000, undefined, { signal });
             return "Waited 2 seconds.";
         case "screenshot_and_continue":
             return "Took a new screenshot.";
@@ -167,7 +154,7 @@ export class VisualAgentLoop {
         broadcast({ type: "visual_loop_status", status: "running", goal });
 
         // Get screen info for system prompt
-        const [screenW, screenH] = await getScreenSize();
+        const [screenW, screenH] = await getScreenSize(opts?.signal);
         const systemPrompt = buildVisualSystemPrompt(screenW, screenH);
 
         // Initial user message with the goal
@@ -196,7 +183,7 @@ export class VisualAgentLoop {
 
             try {
                 // 1. Screenshot
-                const { base64, display } = await captureScreenshot();
+                const { base64, display } = await captureScreenshot(opts?.signal);
 
                 // 2. Build the message with screenshot
                 // We append the screenshot as a user message describing current state.
@@ -210,7 +197,7 @@ export class VisualAgentLoop {
                 log.info(`Step ${loopIndex}: Thought="${(action.thought || "").slice(0, 80)}" Action=${action.action}`);
 
                 // 4. Execute action
-                const toolOutput = await executeVisualAction(action, display);
+                const toolOutput = await executeVisualAction(action, opts?.signal);
 
                 // 5. Build step record
                 const step: VisualLoopStep = {

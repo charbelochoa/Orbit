@@ -9,38 +9,9 @@
  * - Shared Bezier helpers from ps-bridge
  */
 
-import { runPS, getCursorPos, getScreenSize, buildBezierScript } from "./ps-bridge.js";
+import { desktopPoint, dragPointer, getScreenSize, movePointer } from "./ps-bridge.js";
 import { captureDesktopPng, pngDimensions } from "./screenshot.js";
 import { analyzeImage } from "../providers/vision.js";
-
-/**
- * Returns the DPI scale factor of the primary screen (e.g., 1.5 for 150%).
- * Compares physical screen width (GetSystemMetrics SM_CXSCREEN) with
- * the logical width stored in getScreenSize (rounded to nearest 0.25).
- * Cached after first call.
- */
-let _scaleFactor: number | null = null;
-export async function getDisplayScaleFactor(): Promise<number> {
-    if (_scaleFactor !== null) return _scaleFactor;
-    try {
-        const [logW] = await getScreenSize();
-        const physW = await runPS(
-            `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width`,
-            5000
-        );
-        const physical = parseInt(physW.trim(), 10);
-        if (physical > 0 && logW > 0) {
-            const raw = physical / logW;
-            // Round to nearest quarter-step (1.0, 1.25, 1.5, 1.75, 2.0 …)
-            _scaleFactor = Math.round(raw * 4) / 4;
-        } else {
-            _scaleFactor = 1.0;
-        }
-    } catch {
-        _scaleFactor = 1.0;
-    }
-    return _scaleFactor;
-}
 
 /**
  * Find element coordinates using Gemini Vision.
@@ -52,7 +23,8 @@ async function findElementCoords(
     description: string,
     screenshot: Buffer,
     screenW: number,
-    screenH: number
+    screenH: number,
+    signal?: AbortSignal,
 ): Promise<{ x: number; y: number; found: boolean }> {
     const dimensions = pngDimensions(screenshot);
     const imgW = dimensions.width || screenW;
@@ -82,6 +54,7 @@ If the element is not visible anywhere on screen, return: 0,0`;
     const descriptionResult = await analyzeImage({ mimeType: "image/png", data: screenshot.toString("base64") }, {
         messages: [{ role: "user", content: prompt }],
         maxTokens: 160,
+        signal,
     });
     const text = descriptionResult.trim();
     const match = text.match(/^(\d+)\s*,\s*(\d+)$/);
@@ -104,19 +77,21 @@ If the element is not visible anywhere on screen, return: 0,0`;
  * screen_find — Find any UI element on screen by visual description.
  * Returns coordinates for subsequent click/interaction.
  */
-export async function screenFind(parameters: any): Promise<string> {
+export async function screenFind(parameters: any, signal?: AbortSignal): Promise<string> {
     const description = (parameters?.description || parameters?.element || "").trim();
     if (!description) return "Necesito una descripcion del elemento a buscar en pantalla.";
     console.log(`[Screen Find] Buscando: "${description}"`);
     try {
-        const [screenW, screenH] = await getScreenSize();
+        const [screenW, screenH] = await getScreenSize(signal);
         const capture = await captureDesktopPng();
-        const result = await findElementCoords(description, capture, screenW, screenH);
+        signal?.throwIfAborted();
+        const result = await findElementCoords(description, capture, screenW, screenH, signal);
         if (!result.found) {
             return `No encontre "${description}" en pantalla.`;
         }
         return `Elemento encontrado: "${description}" en (${result.x}, ${result.y}).`;
     } catch (e: any) {
+        signal?.throwIfAborted();
         console.error("[Screen Find] ", e);
         return `Error buscando elemento: ${e.message}`;
     }
@@ -126,31 +101,24 @@ export async function screenFind(parameters: any): Promise<string> {
  * click_element — Find a UI element by description and click it.
  * Combines Gemini Vision search + Bezier mouse movement + click.
  */
-export async function clickElement(parameters: any): Promise<string> {
+export async function clickElement(parameters: any, signal?: AbortSignal): Promise<string> {
     const description = (parameters?.description || parameters?.element || "").trim();
     const clickType = (parameters?.click_type || "left").toLowerCase();
     if (!description) return "Necesito una descripcion del elemento a clickear.";
+    if (clickType !== "left" && clickType !== "right" && clickType !== "double") return "Error: usa left, right o double.";
     console.log(`[Click Element] Buscando y clickeando: "${description}"`);
     try {
-        const [screenW, screenH] = await getScreenSize();
+        const [screenW, screenH] = await getScreenSize(signal);
         const capture = await captureDesktopPng();
-        const result = await findElementCoords(description, capture, screenW, screenH);
+        signal?.throwIfAborted();
+        const result = await findElementCoords(description, capture, screenW, screenH, signal);
         if (!result.found) {
             return `No encontre "${description}" en pantalla.`;
         }
-        const tx = Math.max(5, Math.min(result.x, screenW - 5));
-        const ty = Math.max(5, Math.min(result.y, screenH - 5));
-        const [cx, cy] = await getCursorPos();
-        const moveScript = buildBezierScript(cx, cy, tx, ty);
-        if (clickType === "double") {
-            await runPS(`${moveScript} [OrbitInput]::DblClick()`);
-        } else if (clickType === "right") {
-            await runPS(`${moveScript} [OrbitInput]::RClick()`);
-        } else {
-            await runPS(`${moveScript} [OrbitInput]::LClick()`);
-        }
-        return `Click ${clickType} en "${description}" -> (${tx}, ${ty}).`;
+        await movePointer([result.x, result.y], clickType, signal);
+        return `Click ${clickType} en "${description}" -> (${result.x}, ${result.y}).`;
     } catch (e: any) {
+        signal?.throwIfAborted();
         console.error("[Click Element] ", e);
         return `Error clickeando elemento: ${e.message}`;
     }
@@ -160,25 +128,14 @@ export async function clickElement(parameters: any): Promise<string> {
  * drag — Drag from one point to another (or from current position).
  * Uses Bezier-smoothed movement with mouse held down.
  */
-export async function drag(parameters: any): Promise<string> {
-    const fromX = Math.round(Number(parameters?.from_x) || 0);
-    const fromY = Math.round(Number(parameters?.from_y) || 0);
-    const toX = Math.round(Number(parameters?.to_x) || 0);
-    const toY = Math.round(Number(parameters?.to_y) || 0);
-    if (!toX && !toY) return "Necesito coordenadas destino (to_x, to_y).";
-    console.log(`[Drag] (${fromX},${fromY}) -> (${toX},${toY})`);
+export async function drag(parameters: any, signal?: AbortSignal): Promise<string> {
     try {
-        let startX = fromX, startY = fromY;
-        if (!startX && !startY) {
-            [startX, startY] = await getCursorPos();
-        }
-        const moveToStart = buildBezierScript(...(await getCursorPos()), startX, startY);
-        const dragMove = buildBezierScript(startX, startY, toX, toY);
-        await runPS(
-            `${moveToStart} [OrbitInput]::MouseDown();\nStart-Sleep -Milliseconds 50;\n${dragMove} Start-Sleep -Milliseconds 50;\n[OrbitInput]::MouseUp()`
-        );
-        return `Drag completado: (${startX},${startY}) -> (${toX},${toY})`;
+        const start = desktopPoint(parameters?.from_x ?? 0, parameters?.from_y ?? 0);
+        const target = desktopPoint(parameters?.to_x, parameters?.to_y);
+        const origin = await dragPointer(target, start[0] || start[1] ? start : undefined, signal);
+        return `Arrastre completado de (${origin.join(", ")}) a (${target.join(", ")}).`;
     } catch (e: any) {
+        signal?.throwIfAborted();
         console.error("[Drag] ", e);
         return `Error en drag: ${e.message}`;
     }
@@ -188,20 +145,23 @@ export async function drag(parameters: any): Promise<string> {
  * screen_context — Take a screenshot and describe everything visible.
  * Useful for Orbit to understand the current state before taking action.
  */
-export async function screenContext(parameters: any): Promise<string> {
+export async function screenContext(parameters: any, signal?: AbortSignal): Promise<string> {
     const focus = (parameters?.focus || "").trim();
     console.log(`[Screen Context] Capturando contexto...`);
     try {
-        const [screenW, screenH] = await getScreenSize();
+        const [screenW, screenH] = await getScreenSize(signal);
         const capture = await captureDesktopPng();
+        signal?.throwIfAborted();
         const prompt = focus
             ? `Screenshot ${screenW}x${screenH}px. Focus: "${focus}". Describe relevant UI elements, buttons, text fields, positions. Be brief. Respond in Spanish.`
             : `Screenshot ${screenW}x${screenH}px. List ALL visible elements: windows, buttons, text, icons, taskbar. Be brief about positions. Respond in Spanish.`;
         return await analyzeImage({ mimeType: "image/png", data: capture.toString("base64") }, {
             messages: [{ role: "user", content: prompt }],
             maxTokens: 1800,
+            signal,
         }) || "No pude describir la pantalla.";
     } catch (e: any) {
+        signal?.throwIfAborted();
         console.error("[Screen Context] ", e);
         return `Error capturando contexto: ${e.message}`;
     }

@@ -104,7 +104,7 @@ export async function executeTool(name: string, args: any, signal?: AbortSignal,
 //  ── Browser ──────────────────────────────────────────────────
 case "browser_control": result = await browserControl(args); break;
     //  ── Computer control (mouse/keyboard via PowerShell) ──────────
-case "computer_control": result = await computerControl(args); break;
+case "computer_control": result = await computerControl(args, signal); break;
     //  ── Computer settings (volume, brightness, windows) ──────────
 case "computer_settings": result = await computerSettings(args); break;
     //  ── Open applications ─────────────────────────────────────────
@@ -135,10 +135,10 @@ case "send_message": result = await sendMessage(args); break;
     //  ── Reminders (Windows Task Scheduler) ────────────────────────
 case "reminder": result = await reminder(args); break;
     //  ── Screen interaction (Gemini Vision + mouse) ────────────────
-case "screen_find": result = await screenFind(args); break;
-    case "click_element": result = await clickElement(args); break;
-    case "drag": result = await drag(args); break;
-    case "screen_context": result = await screenContext(args); break;
+case "screen_find": result = await screenFind(args, signal); break;
+    case "click_element": result = await clickElement(args, signal); break;
+    case "drag": result = await drag(args, signal); break;
+    case "screen_context": result = await screenContext(args, signal); break;
     //  ── Agent task (enqueued via task-queue in index.ts) ──────────
 case "agent_task": result = await taskCreate({ description: args.goal, priority: args.priority }); break;
     //  ── Run Swarm (Sprint 5) ────────────────────────────────────

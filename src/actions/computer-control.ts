@@ -1,130 +1,110 @@
-import screenshot from 'screenshot-desktop';
-import path from 'path';
-import os from 'os';
-import { runPS, getCursorPos, buildBezierScript } from './ps-bridge.js';
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { captureDesktopPng } from "./screenshot.js";
+import { desktopPoint, focusDesktopWindow, movePointer, pasteDesktopText, pressDesktopKeys, scrollPointer } from "./ps-bridge.js";
 
-/**
- * Escape a string for safe use inside a PowerShell single-quoted literal.
- * Handles: single quotes, dollar signs, backticks, semicolons, and subexpression operators.
- * Uses -EncodedCommand via Base64 when the string contains dangerous patterns.
- */
-function psEscapeAsVariable(value: string): string {
-    // Convert to Base64 encoded byte array and use [Text.Encoding] to decode.
-    // This guarantees no PS interpretation of any char.
-    const b64 = Buffer.from(value, "utf16le").toString("base64");
-    return `([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${b64}')))`;
+const clickActions = {
+    click: "left", left_click: "left", right_click: "right", double_click: "double",
+} as const;
+
+const modifiers: Record<string, number> = { ctrl: 17, control: 17, alt: 18, shift: 16, win: 91, windows: 91, meta: 91 };
+const keys: Record<string, number> = {
+    ...modifiers,
+    backspace: 8, tab: 9, enter: 13, return: 13, escape: 27, esc: 27, space: 32,
+    pgup: 33, pageup: 33, pgdn: 34, pagedown: 34, end: 35, home: 36,
+    left: 37, up: 38, right: 39, down: 40, insert: 45, delete: 46, del: 46,
+};
+const extendedKeys = new Set([33, 34, 35, 36, 37, 38, 39, 40, 45, 46, 91]);
+
+function keyCode(name: string): number {
+    if (/^[a-z0-9]$/.test(name)) return name.toUpperCase().charCodeAt(0);
+    if (/^f(?:[1-9]|1\d|2[0-4])$/.test(name)) return 111 + Number(name.slice(1));
+    if (Object.hasOwn(keys, name)) return keys[name];
+    throw new Error("Orbit no reconoce esa tecla.");
 }
 
-export async function computerControl(parameters: any): Promise<string> {
-    const action = (parameters?.action ?? '').toLowerCase().trim();
-    if (!action) return 'Especifica una accion: type, click, double_click, right_click, move, hotkey, press, scroll, screenshot, wait, focus_window.';
-    console.log(`[Computer Control] ${action}`, parameters);
+export async function computerControl(parameters: any, signal?: AbortSignal): Promise<string> {
+    const action = (parameters?.action ?? "").toLowerCase().trim();
     try {
-        switch (action) {
-            case 'type':
-            case 'smart_type': {
-                const text: string = parameters.text || '';
-                if (!text) return 'Necesito el texto a escribir.';
-                if (text.length > 5) {
-                    // Safe: use Base64-encoded variable to avoid PowerShell injection
-                    const safeText = psEscapeAsVariable(text);
-                    await runPS(`Set-Clipboard -Value ${safeText}; [System.Windows.Forms.SendKeys]::SendWait('^v'); Start-Sleep -Milliseconds 50`);
-                } else {
-                    const escaped = text.replace(/[+^%~(){}[\]]/g, (c: string) => `{${c}}`).replace(/\n/g, '{ENTER}').replace(/\t/g, '{TAB}');
-                    // SendKeys format doesn't interpret PS variables, but still escape quotes
-                    const sendKeySafe = escaped.replace(/'/g, "''");
-                    await runPS(`[System.Windows.Forms.SendKeys]::SendWait('${sendKeySafe}');`);
-                }
-                return `Texto escrito: ${text.slice(0, 40)}${text.length > 40 ? '...' : ''}`;
-            }
-            case 'click':
-            case 'left_click': {
-                const x = Math.round(Number(parameters.x) || 0);
-                const y = Math.round(Number(parameters.y) || 0);
-                const [cx, cy] = await getCursorPos();
-                await runPS(buildBezierScript(cx, cy, x, y) + ' [OrbitInput]::LClick(); Write-Output "ok"');
-                return `Click en (${x}, ${y})`;
-            }
-            case 'double_click': {
-                const x = Math.round(Number(parameters.x) || 0);
-                const y = Math.round(Number(parameters.y) || 0);
-                const [cx, cy] = await getCursorPos();
-                await runPS(buildBezierScript(cx, cy, x, y) + ' [OrbitInput]::LClick(); Start-Sleep -Milliseconds 80; [OrbitInput]::LClick(); Write-Output "ok"');
-                return `Doble click en (${x}, ${y})`;
-            }
-            case 'right_click': {
-                const x = Math.round(Number(parameters.x) || 0);
-                const y = Math.round(Number(parameters.y) || 0);
-                const [cx, cy] = await getCursorPos();
-                await runPS(buildBezierScript(cx, cy, x, y) + ' [OrbitInput]::RClick(); Write-Output "ok"');
-                return `Click derecho en (${x}, ${y})`;
-            }
-            case 'move':
-            case 'mouse_move': {
-                const x = Math.round(Number(parameters.x) || 0);
-                const y = Math.round(Number(parameters.y) || 0);
-                const [cx, cy] = await getCursorPos();
-                await runPS(buildBezierScript(cx, cy, x, y) + ' Write-Output "ok"');
-                return `Raton movido a (${x}, ${y})`;
-            }
-            case 'scroll': {
-                const dir = (parameters.direction || 'down').toLowerCase();
-                const amount = Number(parameters.amount) || 3;
-                const scrollAmt = dir === 'down' || dir === 'right' ? -amount : amount;
-                await runPS(`[OrbitInput]::Scroll(${scrollAmt}); Write-Output "ok"`);
-                return `Scroll ${dir} x${amount}`;
-            }
-            case 'hotkey': {
-                const keys: string = (parameters.keys || 'ctrl+c').toLowerCase();
-                let fmt = keys.replace(/ctrl\+/g, '^').replace(/alt\+/g, '%').replace(/shift\+/g, '+').replace(/win\+/g, '^{ESC}');
-                const parts = fmt.match(/[\^%+]*/g)?.join('') || '';
-                const key = fmt.replace(/[\^%+]/g, '');
-                if (key.length > 1) fmt = `${parts}{${key.toUpperCase()}}`;
-                await runPS(`[System.Windows.Forms.SendKeys]::SendWait('${fmt}');`);
-                return `Atajo ejecutado: ${keys}`;
-            }
-            case 'press': {
-                const key: string = parameters.key || 'enter';
-                const keyMap: Record<string, string> = {
-                    enter: '{ENTER}', tab: '{TAB}', escape: '{ESC}', esc: '{ESC}',
-                    backspace: '{BS}', delete: '{DEL}', space: ' ',
-                    up: '{UP}', down: '{DOWN}', left: '{LEFT}', right: '{RIGHT}',
-                    home: '{HOME}', end: '{END}', pgup: '{PGUP}', pgdn: '{PGDN}',
-                    f1: '{F1}', f2: '{F2}', f3: '{F3}', f4: '{F4}',
-                    f5: '{F5}', f6: '{F6}', f7: '{F7}', f8: '{F8}',
-                    f9: '{F9}', f10: '{F10}', f11: '{F11}', f12: '{F12}',
-                };
-                const sendKey = keyMap[key.toLowerCase()] ?? `{${key.toUpperCase()}}`;
-                await runPS(`[System.Windows.Forms.SendKeys]::SendWait('${sendKey}');`);
-                return `Tecla pulsada: ${key}`;
-            }
-            case 'screenshot': {
-                const tempPath = path.join(os.tmpdir(), `orbit_ss_${Date.now()}.png`);
-                await screenshot({ filename: tempPath });
-                return `Captura guardada en: ${tempPath}`;
-            }
-            case 'wait':
-            case 'sleep': {
-                const secs = Math.min(Number(parameters.seconds) || 1, 30);
-                await new Promise(r => setTimeout(r, secs * 1000));
-                return `Espere ${secs} segundos.`;
-            }
-            case 'focus_window': {
-                const appName: string = parameters.app || parameters.description || '';
-                if (!appName) return 'Necesito el nombre de la ventana.';
-                // Safe: Base64-encoded to prevent PowerShell injection
-                const safeName = psEscapeAsVariable(appName);
-                await runPS(`$wshell = New-Object -ComObject WScript.Shell; $wshell.AppActivate(${safeName});`);
-                return `Ventana activada: ${appName}`;
-            }
-            case 'screen_find':
-            case 'screen_click':
-                return `Accion '${action}' requiere vision. Usa vision_detect primero.`;
-            default:
-                return `Accion no reconocida: '${action}'.`;
+        signal?.throwIfAborted();
+        if (Object.hasOwn(clickActions, action)) {
+            const button = clickActions[action as keyof typeof clickActions];
+            const [x, y] = desktopPoint(parameters.x, parameters.y);
+            await movePointer([x, y], button, signal);
+            return `Click ${button} en (${x}, ${y}).`;
         }
-    } catch (e: any) {
-        console.error(`[Computer Control] Error:`, e);
-        return `Error en computerControl (${action}): ${e.message}`;
+
+        switch (action) {
+            case "type":
+            case "smart_type": {
+                const text = parameters.text;
+                if (typeof text !== "string" || !text || text.length > 32_000 || text.includes("\0")) {
+                    return "Error: indica texto válido de hasta 32 000 caracteres.";
+                }
+                await pasteDesktopText(text, signal);
+                return `Texto enviado al escritorio (${text.length} caracteres).`;
+            }
+            case "move":
+            case "mouse_move": {
+                const [x, y] = desktopPoint(parameters.x, parameters.y);
+                await movePointer([x, y], undefined, signal);
+                return `Cursor movido a (${x}, ${y}).`;
+            }
+            case "scroll": {
+                const direction = (parameters.direction ?? "down").toLowerCase();
+                const amount = parameters.amount ?? 3;
+                if (!["up", "down", "left", "right"].includes(direction) || !Number.isInteger(amount) || amount < 1 || amount > 100) {
+                    return "Error: indica una dirección válida y de 1 a 100 pasos de desplazamiento.";
+                }
+                const horizontal = direction === "left" || direction === "right";
+                await scrollPointer(direction === "down" || direction === "left" ? -amount : amount, horizontal, signal);
+                return `Desplazamiento ${direction} de ${amount} pasos.`;
+            }
+            case "hotkey":
+            case "press": {
+                const input = action === "hotkey" ? parameters.keys : parameters.key ?? "enter";
+                if (typeof input !== "string" || !input.trim() || input.length > 100) return "Error: indica una tecla o combinación válida.";
+                const names = input.trim().toLowerCase().split("+").map(name => name.trim());
+                if (action === "press" && names.length !== 1) return "Error: usa hotkey para una combinación de teclas.";
+                const key = keyCode(names.pop() ?? "");
+                const modifierCodes = names.map(name => {
+                    if (!Object.hasOwn(modifiers, name)) throw new Error("Modificador de teclado desconocido.");
+                    return modifiers[name];
+                });
+                await pressDesktopKeys([...new Set(modifierCodes)], key, extendedKeys.has(key), signal);
+                return `Teclas enviadas: ${input}.`;
+            }
+            case "screenshot": {
+                const target = path.join(os.tmpdir(), `orbit_ss_${randomUUID()}.png`);
+                const capture = await captureDesktopPng();
+                signal?.throwIfAborted();
+                await writeFile(target, capture, { signal });
+                return `Captura guardada en: ${target}`;
+            }
+            case "wait":
+            case "sleep": {
+                const seconds = parameters.seconds ?? 1;
+                if (!Number.isFinite(seconds) || seconds < 0 || seconds > 30) return "Error: indica de 0 a 30 segundos.";
+                await delay(seconds * 1000, undefined, { signal });
+                return `Esperé ${seconds} segundos.`;
+            }
+            case "focus_window": {
+                const title = parameters.app ?? parameters.description;
+                if (typeof title !== "string" || !title.trim() || title.length > 512) return "Error: indica el nombre de la ventana.";
+                await focusDesktopWindow(title, signal);
+                return `Ventana activada: ${title}`;
+            }
+            case "screen_find":
+            case "screen_click":
+                return `La acción ${action} se realiza con las herramientas de visión.`;
+            default:
+                return `Error: acción de escritorio no reconocida (${action || "vacía"}).`;
+        }
+    } catch (error) {
+        signal?.throwIfAborted();
+        return `Error de escritorio (${action}): ${error instanceof Error ? error.message : String(error)}`;
     }
 }
