@@ -12,6 +12,7 @@ import { AnthropicProvider } from "./anthropic.js";
 import { OllamaProvider } from "./ollama.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
 import { jitteredBackoff, ProviderHttpError } from "./retry.js";
+import { isToolProtocolRejection } from "./tool-adapter.js";
 
 const log = createLogger("Providers");
 
@@ -113,6 +114,7 @@ class ProviderRegistryClass {
         const attempted = new Set<string>();
 
         let lastError: Error | null = null;
+        let toolProtocolError: Error | undefined;
 
         for (const link of chain) {
             params.signal?.throwIfAborted();
@@ -145,12 +147,13 @@ class ProviderRegistryClass {
             } catch (e: any) {
                 params.signal?.throwIfAborted();
                 lastError = e;
+                if (params.toolContext && isToolProtocolRejection(e)) toolProtocolError ??= e;
                 this.recordError(link.provider, e);
                 log.warn(`${link.provider} failed: ${e.message}. Trying next...`);
             }
         }
 
-        throw lastError || new Error("All providers in fallback chain failed or unavailable.");
+        throw toolProtocolError || lastError || new Error("All providers in fallback chain failed or unavailable.");
     }
 
     /**
