@@ -60,7 +60,8 @@
       "electron/**/*",
       "dist/**/*",
       "src/ui/**/*",
-      "assets/**/*",
+      "assets/icon.png",
+      "assets/icon@2x.png",
       "config/**/*",
       "skills/**/*",
       "LICENSE-HERMES",
@@ -73,8 +74,9 @@
         "from": "engine",
         "to": "engine",
         "filter": [
-          "**/*",
-          "!models/.gitkeep"
+          "orbit_engine.py",
+          "requirements.txt",
+          "start.bat"
         ]
       }
     ],

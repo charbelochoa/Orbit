@@ -15,6 +15,8 @@ dist-installer/
 # Logs
 *.log
 logs/
+engine/models/*
+!engine/models/.gitkeep
 
 # Data / runtime
 data/memory/

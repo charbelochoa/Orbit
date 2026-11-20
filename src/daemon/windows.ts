@@ -1,146 +1,103 @@
-/**
- * Orbit Daemon — Windows Task Scheduler (Phase 8)
- *
- * Uses `schtasks.exe` to register / query / remove an ONLOGON task that
- * launches Orbit automatically when the user signs in.
- *
- * Schedule:
- *   - Trigger:  ONLOGON (current user)
- *   - Delay:    1 minute after logon (lets the desktop settle)
- *   - Restart:  on failure — 3 attempts, 1 min between each
- *   - Run as:   current user (IT flag — interactive)
- */
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { ORBIT_HOME, PROJECT_ROOT } from "../config/paths.js";
+import { getConfig } from "../config/config.js";
+import { TASK_NAME, currentLogFile, ensureDirs } from "./paths.js";
+import type { DaemonInfo, DaemonService } from "./types.js";
 
-import { exec }     from "child_process";
-import { promisify } from "util";
-import path          from "path";
-import fs            from "fs/promises";
-import { fileURLToPath } from "url";
-import { TASK_NAME, LOGS_DIR, currentLogFile, ensureDirs } from "./paths.js";
-import type { DaemonInfo, DaemonService }                   from "./types.js";
+const execute = promisify(execFile);
+const sourceElectron = path.join(PROJECT_ROOT, "node_modules", "electron", "dist", "electron.exe");
 
-const execAsync = promisify(exec);
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Orbit project root (two levels up from src/daemon/)
-const ORBIT_ROOT  = path.resolve(__dirname, "../../");
-const ELECTRON_EXE = path.join(ORBIT_ROOT, "node_modules", ".bin", "electron.cmd");
-const MAIN_CJS     = path.join(ORBIT_ROOT, "electron", "main.cjs");
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function run(cmd: string): Promise<string> {
-    const { stdout, stderr } = await execAsync(cmd, { windowsHide: true });
-    return (stdout + stderr).trim();
+async function taskScheduler(args: string[]): Promise<string> {
+    const { stdout } = await execute("schtasks.exe", args, { windowsHide: true, timeout: 15_000 });
+    return stdout.trim();
 }
 
-// ── XML task definition (more control than CLI flags) ────────────────────────
+function xml(text: string): string {
+    return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
+}
 
-function buildTaskXml(taskRun: string, logFile: string): string {
-    const userId = `${process.env.USERDOMAIN ?? ""}\\${process.env.USERNAME ?? ""}`.replace(/^\\/, "");
+function buildTaskXml(executable: string, args: string): string {
+    const username = os.userInfo().username;
+    const domain = process.env.USERDOMAIN;
+    const user = xml(domain ? `${domain}\\${username}` : username);
     return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>Orbit AI — Local Desktop Assistant</Description>
-  </RegistrationInfo>
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <UserId>${userId}</UserId>
-      <Delay>PT1M</Delay>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <UserId>${userId}</UserId>
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
+  <RegistrationInfo><Description>Orbit AI</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${user}</UserId><Delay>PT1M</Delay></LogonTrigger></Triggers>
+  <Principals><Principal id="OrbitUser"><UserId>${user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <RestartOnFailure>
-      <Interval>PT1M</Interval>
-      <Count>3</Count>
-    </RestartOnFailure>
-    <Enabled>true</Enabled>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>
   </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>${taskRun.replace(/&/g, "&amp;")}</Command>
-      <Arguments>"${MAIN_CJS.replace(/&/g, "&amp;")}"</Arguments>
-      <WorkingDirectory>${ORBIT_ROOT.replace(/&/g, "&amp;")}</WorkingDirectory>
-    </Exec>
-  </Actions>
+  <Actions Context="OrbitUser"><Exec>
+    <Command>${xml(executable)}</Command>
+    <Arguments>${xml(args)}</Arguments>
+    <WorkingDirectory>${xml(path.dirname(executable))}</WorkingDirectory>
+  </Exec></Actions>
 </Task>`;
 }
 
-// ── WindowsDaemonService ──────────────────────────────────────────────────────
-
 export class WindowsDaemonService implements DaemonService {
-
     async install(): Promise<void> {
+        const installed = process.env.ORBIT_EXECUTABLE;
+        const executable = installed ? path.resolve(installed) : sourceElectron;
+        await fs.access(executable);
+        if (!installed) await fs.access(path.join(PROJECT_ROOT, "dist", "index.js"));
         await ensureDirs();
-
-        // Prefer the local electron binary; fall back to global `electron`
-        let taskRun = ELECTRON_EXE;
+        const temporary = path.join(os.tmpdir(), `orbit-task-${randomUUID()}.xml`);
+        const args = installed ? "--background" : `"${path.resolve(PROJECT_ROOT)}" --background`;
         try {
-            await fs.access(ELECTRON_EXE);
-        } catch {
-            taskRun = "electron";
-        }
-
-        const logFile = currentLogFile();
-        const xml     = buildTaskXml(taskRun, logFile);
-
-        // Write XML to a temp file and import it
-        const tmpXml  = path.join(ORBIT_ROOT, ".orbit-task.xml");
-        await fs.writeFile(tmpXml, Buffer.from("\xFF\xFE" + xml, "binary")); // UTF-16 LE BOM
-
-        try {
-            await run(`schtasks /Create /XML "${tmpXml}" /TN "${TASK_NAME}" /F`);
+            await fs.writeFile(temporary, Buffer.from("\uFEFF" + buildTaskXml(executable, args), "utf16le"), { flag: "wx" });
+            await taskScheduler(["/Create", "/XML", temporary, "/TN", TASK_NAME, "/F"]);
         } finally {
-            await fs.unlink(tmpXml).catch(() => {});
+            await fs.unlink(temporary).catch(() => {});
         }
     }
 
     async uninstall(): Promise<void> {
-        await run(`schtasks /Delete /TN "${TASK_NAME}" /F`);
+        await taskScheduler(["/Delete", "/TN", TASK_NAME, "/F"]);
     }
 
     async status(): Promise<DaemonInfo> {
+        const { webPort } = getConfig().server;
         try {
-            const out = await run(`schtasks /Query /TN "${TASK_NAME}" /FO CSV /NH`);
-            if (!out.includes(TASK_NAME)) {
-                return { status: "stopped", message: "Tarea no existe en Task Scheduler." };
+            const response = await fetch(`http://127.0.0.1:${webPort}/health`, { signal: AbortSignal.timeout(800) });
+            if (response.ok && (await response.json()).service === "orbit") {
+                return { status: "running", taskName: TASK_NAME, message: "El agente local de Orbit está activo." };
             }
-            // CSV: "TaskName","Next Run Time","Status","Last Run Time","Last Result"
-            const cols = out.split(",").map(c => c.replace(/^"|"$/g, "").trim());
-            const taskStatus = (cols[2] ?? "").toLowerCase();
-            return {
-                status:   taskStatus.includes("running") ? "running" : "stopped",
-                taskName: TASK_NAME,
-                nextRun:  cols[1],
-                lastRun:  cols[3],
-                message:  `Estado: ${cols[2] ?? "desconocido"}`,
-            };
+        } catch {}
+
+        try {
+            await taskScheduler(["/Query", "/TN", TASK_NAME]);
+            return { status: "stopped", taskName: TASK_NAME, message: "El inicio con Windows está configurado." };
         } catch {
-            return { status: "unknown", message: `Tarea "${TASK_NAME}" no encontrada. Instala con: orbit install` };
+            return { status: "stopped", message: "Orbit está cerrado. El inicio con Windows no está configurado en el Programador de tareas." };
         }
     }
 
     async logs(lines = 100): Promise<string> {
-        const logFile = currentLogFile();
-        try {
-            const content = await fs.readFile(logFile, "utf-8");
-            const all = content.split("\n");
-            return all.slice(-lines).join("\n");
-        } catch {
-            return `No se encontró el archivo de log: ${logFile}`;
+        const activeLog = path.join(ORBIT_HOME, "logs", "backend.log");
+        for (const filename of [activeLog, currentLogFile()]) {
+            try {
+                const file = await fs.open(filename, "r");
+                try {
+                    const { size } = await file.stat();
+                    const length = Math.min(size, 256 * 1024);
+                    const { buffer, bytesRead } = await file.read(Buffer.alloc(length), 0, length, size - length);
+                    return buffer.subarray(0, bytesRead).toString("utf-8").split(/\r?\n/).slice(-Math.max(1, lines)).join("\n");
+                } finally {
+                    await file.close();
+                }
+            } catch {}
         }
+        return `No se encontró el archivo de registro: ${activeLog}`;
     }
 }
