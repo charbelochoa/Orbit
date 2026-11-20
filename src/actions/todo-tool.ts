@@ -14,9 +14,7 @@ interface TodoItem {
 }
 
 function getTodosPath(): string {
-    const dir = path.join(workspaceRoot(), ".orbit");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return path.join(dir, "todos.json");
+    return path.join(workspaceRoot(), ".orbit", "todos.json");
 }
 
 function loadTodos(): TodoItem[] {
@@ -30,7 +28,9 @@ function loadTodos(): TodoItem[] {
 }
 
 function saveTodos(todos: TodoItem[]): void {
-    fs.writeFileSync(getTodosPath(), JSON.stringify(todos, null, 2));
+    const filename = getTodosPath();
+    fs.mkdirSync(path.dirname(filename), { recursive: true });
+    fs.writeFileSync(filename, JSON.stringify(todos, null, 2));
 }
 
 export async function todoRead(): Promise<string> {
