@@ -15,6 +15,11 @@ import { KeyedAsyncQueue } from "../infra/keyed-async-queue.js";
 const SESSION_TOKEN = crypto.randomBytes(32).toString("hex");
 const _authenticatedClients = new Set<string>();
 
+function tokenMatches(value: unknown): boolean {
+    return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) &&
+        crypto.timingSafeEqual(Buffer.from(value, "hex"), Buffer.from(SESSION_TOKEN, "hex"));
+}
+
 /** Retrieve the session token (used by Electron/CLI to auto-authenticate). */
 export function getSessionToken(): string { return SESSION_TOKEN; }
 
@@ -171,11 +176,7 @@ export async function startGateway(
         // Check for auth token in URL query: ws://localhost:18789?token=<SESSION_TOKEN>
         const url = new URL(req.url || "/", `http://127.0.0.1:${gatewayPort}`);
         const token = url.searchParams.get("token");
-        const tokenValid = token !== null && token.length === SESSION_TOKEN.length &&
-            crypto.timingSafeEqual(
-                Buffer.from(token, "utf-8"),
-                Buffer.from(SESSION_TOKEN, "utf-8"),
-            );
+        const tokenValid = tokenMatches(token);
         // Auto-authenticate same-machine clients with no Origin header (Electron, CLI, curl)
         const isLocalNoOrigin = origin === undefined;
         const preAuth = tokenValid || isLocalNoOrigin;
@@ -196,8 +197,7 @@ export async function startGateway(
 
                 // Handle auth message for clients that didn't pass token in URL
                 if (msg.type === "auth") {
-                    const valid = typeof msg.token === "string" && msg.token.length === SESSION_TOKEN.length &&
-                        crypto.timingSafeEqual(Buffer.from(msg.token, "utf-8"), Buffer.from(SESSION_TOKEN, "utf-8"));
+                    const valid = tokenMatches(msg.token);
                     client.authenticated = valid;
                     ws.send(JSON.stringify({ type: "auth_result", success: valid }));
                     if (!valid) console.warn(`[Gateway] Auth fallida para ${id}`);
@@ -219,7 +219,9 @@ export async function startGateway(
                 }
                 await withWorkspace(workspace, () => handleClientMessage(id, msg, speakFn, chat, voice));
             } catch (e: any) {
-                ws.send(JSON.stringify({ type: "error", message: `JSON invalido: ${e.message}` }));
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "error", message: e instanceof SyntaxError ? "Mensaje JSON inválido." : e.message }));
+                }
             }
         });
 
@@ -324,12 +326,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 workspace: workspaceRoot(),
                 gemini: providerRegistry.get("gemini")?.isAvailable() ?? false,
                 python: process.env.ORBIT_VISION_ENGINE === "1",
-                tasks: tasks.map(t => ({
-                    id: t.id,
-                    goal: t.goal.slice(0, 60),
-                    status: t.status,
-                    priority: t.priority
-                })),
+                tasks: tasks.slice(-100).reverse(),
                 tokensUsed:    _sessionTotalTokens,
                 inputTokens:   _sessionInputTokens,
                 outputTokens:  _sessionOutputTokens,
@@ -411,6 +408,13 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             const taskId = payload?.id as string;
             const ok = taskId ? getQueue().resume(taskId) : false;
             client.ws.send(JSON.stringify({ type: "task_resume_ack", id: taskId, ok }));
+            break;
+        }
+
+        case "task_cancel": {
+            const id = payload?.id;
+            const ok = typeof id === "string" && getQueue().cancel(id);
+            client.ws.send(JSON.stringify({ type: "task_cancel_ack", id, ok }));
             break;
         }
 

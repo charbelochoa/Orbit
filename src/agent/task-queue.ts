@@ -268,13 +268,15 @@ class TaskQueue {
     /**
      * List all tasks.
      */
-    listAll(): Array<{ id: string; goal: string; status: string; priority: string; createdAt: string }> {
+    listAll() {
         return Array.from(this.tasks.values()).map(t => ({
             id: t.id,
             goal: t.goal.slice(0, 80),
             status: t.status,
             priority: TaskPriority[t.priority],
             createdAt: t.createdAt.toISOString(),
+            result: t.result?.slice(0, 1000),
+            error: t.error?.slice(0, 1000),
         }));
     }
 

@@ -620,20 +620,23 @@ function handle(msg){
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
     case 'tool_result':finalizeToolBlock(msg.tool,!msg.error,msg.result);finalizeToolEvent(msg.tool,!msg.error,msg.result);break;
     case 'typing':if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;
-    case 'task_plan':if(msg.taskId)upsertTask(msg.taskId,{title:msg.goal||'Nueva tarea',status:'running',steps:(msg.steps||[]).map(function(s){return typeof s==='string'?{name:s}:s;})});break;
-    case 'task_queued':if(msg.taskId)upsertTask(msg.taskId,{title:msg.goal||'Tarea en cola',status:'pending',steps:[]});break;
-    case 'task_progress':if(msg.taskId)upsertTask(msg.taskId,{progress:msg.progress,status:'running'});break;
-    case 'task_step_done':if(msg.taskId)markTaskStep(msg.taskId,msg.step,'done');break;
-    case 'task_step_error':if(msg.taskId)markTaskStep(msg.taskId,msg.step,'error');if(msg.message)addOrbitBubble('! '+msg.message);break;
-    case 'task_complete':if(msg.taskId)upsertTask(msg.taskId,{status:'done',progress:100});showThinking(false);if(msg.summary)addOrbitBubble(msg.summary);break;
-    case 'task_cancelled':if(msg.taskId)upsertTask(msg.taskId,{status:'cancelled'});break;
-    case 'task_paused':if(msg.id)upsertTask(msg.id,{status:'paused'});break;
-    case 'task_resumed':if(msg.id)upsertTask(msg.id,{status:'running'});break;
-    case 'task_replan':if(msg.taskId)upsertTask(msg.taskId,{status:'running'});break;
+    case 'task_created':upsertTask(msg.id,{title:msg.goal});break;
+    case 'task_started':upsertTask(msg.id,{status:'running'});break;
+    case 'task_plan':upsertTask(msg.taskId,{title:msg.goal,status:'running',steps:msg.steps||[]});break;
+    case 'task_queued':upsertTask(msg.taskId,{title:msg.goal||tasks[msg.taskId]?.title||'Tarea en cola'});break;
+    case 'task_progress':upsertTask(msg.taskId,{progress:msg.progress,status:tasks[msg.taskId]?.status||'running'});break;
+    case 'task_step_done':markTaskStep(msg.taskId,msg.step,'done');break;
+    case 'task_step_error':markTaskStep(msg.taskId,msg.step,'error',msg.error);break;
+    case 'task_complete':upsertTask(msg.taskId,{status:msg.success?'done':'failed',summary:msg.summary});break;
+    case 'task_done':upsertTask(msg.id,{status:'done',progress:100,summary:tasks[msg.id]?.summary||msg.result});break;
+    case 'task_failed':upsertTask(msg.id,{status:'failed',summary:msg.error});break;
+    case 'task_cancelled':upsertTask(msg.taskId||msg.id,{status:'cancelled'});break;
+    case 'task_paused':upsertTask(msg.id,{status:'paused'});break;
+    case 'task_resumed':upsertTask(msg.id,{status:'running'});break;
     case 'visual_loop_status':updateVisualBar(msg.status,msg.goal);break;
     case 'visual_loop_step':updateVisualBar('running',null,msg.loop,msg.maxLoops,msg.action);break;
     case 'memory':if(msg.key)updateMem(msg.key,msg.value,msg.ts);break;
-    case 'status':if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
+    case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(task=>upsertTask(task.id,{title:task.goal,status:task.status,summary:task.error||task.result,createdAt:task.createdAt}));if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
     case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'command_result':addOrbitBubble(msg.text||msg.message||'OK');setSendMode(false);break;
     case 'command_error':addOrbitBubble('! '+(msg.text||msg.message||'Error'));setSendMode(false);break;
@@ -671,7 +674,7 @@ document.querySelectorAll('.welcome-prompt').forEach(function(btn){btn.addEventL
 
 /* NAVIGATION */
 function showView(id){document.querySelectorAll('.view').forEach(function(v){v.classList.remove('active');});var el=g(id);if(el)el.classList.add('active');document.querySelectorAll('.sb-footer-btn').forEach(function(b){b.classList.remove('active');});var map={'view-tasks':'nav-tasks','view-memory':'nav-memory','view-tools':'nav-tools','view-settings':'nav-settings'};if(map[id]){var btn=g(map[id]);if(btn)btn.classList.add('active');}}
-g('nav-tasks').addEventListener('click',function(){showView('view-tasks');});
+g('nav-tasks').addEventListener('click',function(){showView('view-tasks');sendWs({type:'status'});});
 g('nav-memory').addEventListener('click',function(){showView('view-memory');});
 g('nav-tools').addEventListener('click',function(){showView('view-tools');});
 g('nav-settings').addEventListener('click',function(){showView('view-settings');});
@@ -721,18 +724,61 @@ g('provider-select').addEventListener('change',function(){sendWs({type:'chat',pa
 function syncProviderSel(id){var sel=g('provider-select');if(sel)sel.value=id;var msel=g('model-select');if(msel)msel.value=id;}
 
 /* TASKS */
-var tasks={};
-function upsertTask(id,patch){if(!tasks[id])tasks[id]={id:id,title:'Tarea',status:'pending',steps:[],progress:0};Object.assign(tasks[id],patch);renderTaskCard(id);}
-function markTaskStep(id,stepName,state){if(!tasks[id])return;var step=tasks[id].steps.find(function(s){return s.name===stepName||s.tool===stepName;});if(step){step.state=state;renderTaskCard(id);}}
-function renderTaskCard(id){var t=tasks[id],panel=g('view-tasks'),empty=g('tasks-empty'),existing=g('task-card-'+id);if(!existing){existing=document.createElement('div');existing.id='task-card-'+id;existing.className='task-card';if(empty)panel.insertBefore(existing,empty);else panel.appendChild(existing);if(empty)empty.style.display='none';}var sc={running:'running',paused:'paused',done:'done',error:'error'}[t.status]||'';var pauseBtn=t.status==='running'?'<button class="task-pause-btn" onclick="pauseTask(\''+esc(id)+'\')" title="Pausar">⏸</button>':'';var resumeBtn=t.status==='paused'?'<button class="task-resume-btn" onclick="resumeTask(\''+esc(id)+'\')" title="Reanudar">▶</button>':'';var cancelBtn=(t.status==='running'||t.status==='paused')?'<button class="task-cancel-btn" onclick="cancelTask(\''+esc(id)+'\')">Cancelar</button>':'';var stepsHtml=(t.steps||[]).map(function(s){var ss=s.state==='done'?'done':s.state==='error'?'error':s.state==='active'?'active':'';return '<div class="task-step '+ss+'"><span class="task-step-dot"></span><span>'+esc(s.name||s.tool||'Paso')+'</span></div>';}).join('');existing.innerHTML='<div class="task-card-header"><span class="task-status-dot '+sc+'"></span><span class="task-title">'+esc(t.title)+'</span><span class="task-time">'+tsShort()+'</span>'+pauseBtn+resumeBtn+cancelBtn+'</div><div class="task-progress-bar"><div class="task-progress-fill" style="width:'+(t.progress||0)+'%"></div></div>'+(stepsHtml?'<div class="task-steps">'+stepsHtml+'</div>':'');}
-function cancelTask(id){sendWs({type:'chat',payload:{text:'/cancel '+id}});}
-function pauseTask(id){sendWs({type:'task_pause',payload:{id:id}});}
-function resumeTask(id){sendWs({type:'task_resume',payload:{id:id}});}
-/* VISUAL LOOP BAR */
-function updateVisualBar(status,goal,loop,maxLoops,action){var bar=g('visual-bar');if(!bar)return;if(status==='running'||status==='paused'){bar.style.display='flex';var label=action?action:(goal?goal.slice(0,60):'Procesando...');var loopTxt=(loop&&maxLoops)?' '+loop+'/'+maxLoops:'';g('vbar-label').textContent=label+loopTxt;g('vbar-pause').style.display=status==='running'?'inline-flex':'none';g('vbar-resume').style.display=status==='paused'?'inline-flex':'none';}else{bar.style.display='none';}}
-function pauseTask(id){sendWs({type:'task_pause',payload:{id:id}});}
-function resumeTask(id){sendWs({type:'task_resume',payload:{id:id}});}
-/* VISUAL LOOP BAR */
+const tasks = Object.create(null);
+const taskLabels = { pending:'En cola', running:'En curso', paused:'Pausada', done:'Completada', failed:'Fallida', cancelled:'Cancelada' };
+
+function upsertTask(id, patch) {
+  if (typeof id !== 'string' || !id) return;
+  tasks[id] ||= { id, title:'Tarea', status:'pending', steps:[], progress:0 };
+  Object.assign(tasks[id], patch);
+  renderTaskCard(tasks[id]);
+}
+
+function markTaskStep(id, stepId, state, error) {
+  const task = tasks[id];
+  const step = task?.steps.find(step => step.step === stepId);
+  if (!step) return;
+  Object.assign(step, {state, error});
+  renderTaskCard(task);
+}
+
+function renderTaskCard(task) {
+  const empty = g('tasks-empty');
+  let card = g('task-card-' + task.id);
+  if (!card) {
+    card = document.createElement('article');
+    card.id = 'task-card-' + task.id;
+    card.className = 'task-card';
+    g('view-tasks').insertBefore(card, g('view-tasks').firstChild);
+    empty.hidden = true;
+  }
+  const progress = task.status === 'done' ? 100 : Math.min(100, Math.max(0, Number(task.progress) || 0));
+  const steps = task.steps.map(step => {
+    const state = ['done','error'].includes(step.state) ? step.state : '';
+    return '<li class="task-step '+state+'"><span class="task-step-dot"></span><span>'+
+      esc(step.description||step.tool||'Paso')+(step.error?'<small>'+esc(step.error)+'</small>':'')+'</span></li>';
+  }).join('');
+  const badge = task.status === 'failed' ? 'error' : ['running','paused','done'].includes(task.status) ? task.status : '';
+  card.innerHTML = '<div class="task-card-header"><span class="task-status-dot '+badge+'"></span><span class="task-title">'+
+    esc(task.title)+'</span><span class="task-time">'+esc(taskLabels[task.status]||task.status)+'</span></div>'+
+    '<progress class="task-progress" aria-label="Progreso" value="'+progress+'" max="100"></progress>'+
+    (steps ? '<ul class="task-steps">'+steps+'</ul>' : '')+
+    (task.summary?'<p class="task-summary">'+esc(task.summary)+'</p>':'');
+  const controls = document.createElement('div');
+  controls.className = 'task-controls';
+  const addAction = (label, type) => {
+    const button = document.createElement('button');
+    button.className = 'topbar-action';
+    button.textContent = label;
+    button.addEventListener('click', () => sendWs({type,payload:{id:task.id}}));
+    controls.appendChild(button);
+  };
+  if (task.status === 'running') addAction('Pausar', 'task_pause');
+  if (task.status === 'paused') addAction('Reanudar', 'task_resume');
+  if (['pending','running','paused'].includes(task.status)) addAction('Cancelar', 'task_cancel');
+  if (controls.childElementCount) card.appendChild(controls);
+}
+
 var _vbarVisible=false;
 function updateVisualBar(status,goal,loop,maxLoops,action){
   var bar=g('visual-bar');if(!bar)return;

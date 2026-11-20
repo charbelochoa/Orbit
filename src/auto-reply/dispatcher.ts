@@ -5,7 +5,6 @@
  */
 
 import { WebSocket }            from "ws";
-import { setTypingState }       from "../gateway/server.js";
 import { parseCommand }         from "./command-detection.js";
 import { createLogger }         from "../infra/logger.js";
 import type { CommandDef, CommandContext } from "./types.js";
@@ -56,18 +55,21 @@ export async function dispatchCommand(
     const parsed = parseCommand(text);
     if (!parsed) return false;
 
+    const send = (message: Record<string, unknown>) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+    };
     const def = commandRegistry.get(parsed.name);
     if (!def) {
-        ws.send(JSON.stringify({
+        send({
             type:    "command_error",
             message: `Comando desconocido: /${parsed.name}. Escribe /help para ver los comandos disponibles.`,
-        }));
+        });
         return true;
     }
 
     const ctx: CommandContext = {
         clientId,
-        sendReply:  (msg) => ws.send(JSON.stringify(msg)),
+        sendReply:  send,
         speakFn,
         rawText:    text,
         args:       parsed.args,
@@ -76,24 +78,24 @@ export async function dispatchCommand(
         signal,
     };
 
-    setTypingState("thinking");
+    send({ type: "typing", state: "thinking" });
     try {
         const result = await def.handler(ctx);
         if (typeof result === "string" && result.trim()) {
-            ws.send(JSON.stringify({
+            send({
                 type:    "command_result",
                 command: parsed.name,
                 message: result,
-            }));
+            });
         }
     } catch (e: any) {
         log.error(`Error en comando /${parsed.name}:`, e.message);
-        ws.send(JSON.stringify({
+        send({
             type:    "command_error",
             message: signal?.aborted ? "Comando cancelado." : `Error ejecutando /${parsed.name}: ${e.message}`,
-        }));
+        });
     } finally {
-        setTypingState("idle");
+        send({ type: "typing", state: "idle" });
     }
     return true;
 }

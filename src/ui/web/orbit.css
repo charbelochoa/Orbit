@@ -111,6 +111,14 @@ button, input, textarea, select { font: inherit; }
 #msg-input { min-height: 27px; }
 #send-btn { color: #18221a; border-radius: 9px; }
 .view:not(#view-chat) { overflow-y: auto; }
+#view-tasks { padding: 18px max(14px, calc((100% - 740px) / 2)); gap: 10px; }
+#view-tasks .task-card { margin: 0; width: 100%; flex: none; }
+.task-progress { display: block; width: 100%; height: 6px; margin: 10px 0; accent-color: var(--accent); }
+.task-summary { padding-top: 8px; color: var(--text-2); overflow-wrap: anywhere; }
+.task-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.task-step small { display: block; color: var(--text-3); }
+#tasks-empty[hidden] { display: none; }
+#project-folder { max-width: 135px; overflow: hidden; text-overflow: ellipsis; }
 .settings-note { padding: 10px 12px; color: var(--text-3); font-size: 12px; }
 #settings-edit-row[hidden] { display: none; }
 #cd-args {
