@@ -26,8 +26,10 @@
 import { APP_DATA, SKILL_HOME } from "../config/paths.js";
 import fs            from "fs/promises";
 import path          from "path";
+import { setTimeout as delay } from "node:timers/promises";
 import { createLogger }  from "../infra/logger.js";
-import { computerControl } from "./computer-control.js";
+import { executeTool } from "./index.js";
+import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
 
 const log       = createLogger("rpa-recorder");
 const MACROS_DIR = path.join(APP_DATA, "rpa");
@@ -83,6 +85,7 @@ export interface ReplayOptions {
     stopOnError?: boolean;
     /** Loop N times (default: 1) */
     loops?: number;
+    signal?: AbortSignal;
 }
 
 export interface ReplayResult {
@@ -208,6 +211,7 @@ export async function listMacros(): Promise<RpaRecording[]> {
 // ── Get ───────────────────────────────────────────────────────────────────────
 
 export async function getMacro(id: string): Promise<RpaRecording | null> {
+    if (!/^rpa_[a-z0-9-]{1,80}$/i.test(id)) return null;
     try {
         const raw = await fs.readFile(path.join(MACROS_DIR, `${id}.json`), "utf-8");
         return JSON.parse(raw) as RpaRecording;
@@ -219,6 +223,7 @@ export async function getMacro(id: string): Promise<RpaRecording | null> {
 // ── Delete ────────────────────────────────────────────────────────────────────
 
 export async function deleteMacro(id: string): Promise<boolean> {
+    if (!/^rpa_[a-z0-9-]{1,80}$/i.test(id)) return false;
     try {
         await fs.unlink(path.join(MACROS_DIR, `${id}.json`));
         log.info(`Macro eliminada: ${id}`);
@@ -234,13 +239,20 @@ export async function replayMacro(
     id: string,
     opts: ReplayOptions = {},
 ): Promise<ReplayResult> {
+    const { signal } = opts;
+    signal?.throwIfAborted();
     const rec = await getMacro(id);
     if (!rec) throw new Error(`Macro '${id}' no encontrada.`);
+    if (!Array.isArray(rec.steps)) throw new Error("La macro no tiene pasos válidos.");
 
     const speed     = opts.speed      ?? 1.0;
     const stepDelay = opts.stepDelay  ?? 200;
     const stopOnErr = opts.stopOnError ?? true;
-    const loops     = Math.max(1, opts.loops ?? 1);
+    const loops     = opts.loops ?? 1;
+    if (!Number.isInteger(loops) || loops < 1 || loops > 20 || !Number.isFinite(speed) || speed <= 0 ||
+        !Number.isFinite(stepDelay) || stepDelay < 0 || stepDelay > 10_000) {
+        throw new Error("Usa de 1 a 20 repeticiones, una velocidad positiva y una espera de hasta 10 segundos entre pasos.");
+    }
 
     const result: ReplayResult = {
         success:    true,
@@ -253,26 +265,30 @@ export async function replayMacro(
 
     for (let loop = 0; loop < loops; loop++) {
         for (let i = 0; i < rec.steps.length; i++) {
+            signal?.throwIfAborted();
             const step = rec.steps[i];
             try {
                 // Adjust wait durations for speed multiplier
                 const adjusted = { ...step };
                 if (adjusted.action === "wait" && adjusted.seconds) {
-                    adjusted.seconds = adjusted.seconds / speed;
+                    adjusted.seconds = Math.min(30, adjusted.seconds / speed);
                 }
 
-                await computerControl(adjusted);
+                const output = await executeTool("computer_control", adjusted, signal);
+                const failure = getToolFailure(output);
+                if (failure) throw failure;
                 result.stepsRan++;
 
                 // Inter-step delay
                 if (i < rec.steps.length - 1 && stepDelay > 0) {
-                    await new Promise(r => setTimeout(r, stepDelay));
+                    await delay(stepDelay, undefined, { signal });
                 }
             } catch (err: any) {
+                signal?.throwIfAborted();
                 const msg = err.message || String(err);
                 result.errors.push({ step: i + 1, error: msg });
                 log.warn(`Error en paso ${i + 1} (${step.action}):`, msg);
-                if (stopOnErr) {
+                if (stopOnErr || (err instanceof OrbitToolError && err.code === "PERMISSION_DENIED")) {
                     result.success = false;
                     result.durationMs = Date.now() - t0;
                     return result;
@@ -378,7 +394,7 @@ export function getActiveSessions(): Array<{ id: string; name: string; steps: nu
 
 // ── Tool handler (rpa_record) ─────────────────────────────────────────────────
 
-export async function rpaRecord(args: any): Promise<string> {
+export async function rpaRecord(args: any, signal?: AbortSignal): Promise<string> {
     const action = (args?.action || "list").toLowerCase();
 
     switch (action) {
@@ -444,9 +460,10 @@ export async function rpaRecord(args: any): Promise<string> {
                 stepDelay:   typeof args.step_delay === "number" ? args.step_delay : 200,
                 stopOnError: args.stop_on_error !== false,
                 loops:       typeof args.loops === "number"      ? args.loops      : 1,
+                signal,
             };
             const result = await replayMacro(id, opts);
-            const status = result.success ? "✅ Completado" : "⚠️ Completado con errores";
+            const status = result.success ? "Macro completada" : "Error al reproducir la macro";
             const errLines = result.errors.map(e => `  - Paso ${e.step}: ${e.error}`).join("\n");
             return `${status}\nPasos ejecutados: ${result.stepsRan} | Tiempo: ${(result.durationMs / 1000).toFixed(1)}s${result.errors.length > 0 ? `\n\nErrores:\n${errLines}` : ""}`;
         }

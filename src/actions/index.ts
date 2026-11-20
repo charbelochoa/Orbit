@@ -118,7 +118,7 @@ case "screen_vision": case "screen_process": result = await screenVision(args, s
     //  ── Visual Memory (Sprint 6) ──────────────────────────────────
 case "capture_screen_memory": result = await captureScreenMemory(args); break;
     //  ── RPA Recorder (Sprint 7) ───────────────────────────────
-case "rpa_record": result = await rpaRecord(args); break;
+case "rpa_record": result = await rpaRecord(args, signal); break;
     //  ── YOLO Vision Engine (orbit_master_v1.pt) ───────────────────
 case "vision_detect": result = await visionDetect(args); break;
     case "vision_click": result = await visionClick(args); break;

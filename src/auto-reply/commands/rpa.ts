@@ -25,6 +25,7 @@ import {
     getActiveSessions,
 } from "../../actions/rpa-recorder.js";
 import type { CommandHandler } from "../types.js";
+import { runInLane } from "../../agent/lanes.js";
 
 export const rpaCommand: CommandHandler = async (ctx) => {
     const sub  = ctx.subcommand;
@@ -82,14 +83,13 @@ export const rpaCommand: CommandHandler = async (ctx) => {
         const loopArg = parts.find(p => /^x\d+$/i.test(p));
         if (loopArg) loops = parseInt(loopArg.slice(1), 10) || 1;
 
-        ctx.sendReply({ type: "status", text: `▶️ Reproduciendo macro ${id}...` });
-        const result = await replayMacro(id, { loops, stepDelay: 250 });
+        ctx.sendReply({ type: "typing", state: "executing", tool: "rpa_record" });
+        const result = await runInLane(ctx.clientId, () => replayMacro(id, { loops, stepDelay: 250, signal: ctx.signal }), ctx.signal, "rpa_record");
 
-        const icon   = result.success ? "✅" : "⚠️";
         const errMsg = result.errors.length > 0
             ? `\n\nErrores:\n${result.errors.map(e => `  - Paso ${e.step}: ${e.error}`).join("\n")}`
             : "";
-        return `${icon} **Replay ${result.success ? "completado" : "con errores"}**\nPasos: ${result.stepsRan} | Tiempo: ${(result.durationMs / 1000).toFixed(1)}s${errMsg}`;
+        return `**${result.success ? "Macro completada" : "Macro con errores"}**\nPasos ejecutados ${result.stepsRan} · ${(result.durationMs / 1000).toFixed(1)} s${errMsg}`;
     }
 
     // ── delete ────────────────────────────────────────────────────────────────
