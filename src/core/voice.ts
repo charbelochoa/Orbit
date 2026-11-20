@@ -4,6 +4,7 @@ import {
 } from "@google/genai";
 import { getConfig } from "../config/config.js";
 import { IterationBudget } from "../agent/iteration-budget.js";
+import { boundToolResult } from "../context/text-budget.js";
 
 interface VoiceOptions {
     data: string;
@@ -63,7 +64,7 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
                 const result = allowed.has(name)
                     ? await options.execute(name, call.args ?? {})
                     : "Herramienta no disponible.";
-                responses.push({ id: call.id, name, response: { result } });
+                responses.push({ id: call.id, name, response: { result: boundToolResult(result) } });
             }
             signal.throwIfAborted();
             session?.sendToolResponse({ functionResponses: responses });

@@ -3,6 +3,7 @@ import type { OrbitTool } from "../core/registry.js";
 import type { ChatMessage, TextGenerationParams, TextGenerationResult } from "../providers/types.js";
 import { IterationBudget } from "./iteration-budget.js";
 import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
+import { boundToolResult, sliceUtf16Safe } from "../context/text-budget.js";
 
 const decisionSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("reply"), text: z.string().trim().min(1) }),
@@ -29,8 +30,10 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
     const { signal, tools, maxIterations } = options;
     const available = new Map(tools.map(tool => [tool.id, tool]));
     const budget = new IterationBudget(maxIterations + 1);
-    const messages = [...options.messages];
-    const catalog = tools.map(({ id, description, parameters }) => ({ name: id, description, parameters }));
+    const trace: ChatMessage[][] = [];
+    const catalog = tools.map(({ id, description, parameters }) => ({
+        name: id, description: sliceUtf16Safe(description, 0, 320), parameters,
+    }));
     const systemPrompt = [
         options.systemPrompt,
         'Return one JSON object per turn: {"type":"reply","text":"..."} or {"type":"tool","name":"...","args":{}}.',
@@ -45,7 +48,7 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
         const canUseTools = budget.remaining > 0;
         const result = await options.generate({
             systemPrompt: canUseTools ? systemPrompt : systemPrompt + "\nThis is the final turn. Return a reply only.",
-            messages,
+            messages: fitTurnMessages(options.messages, trace),
             responseFormat: "json",
             maxTokens: 4096,
             signal,
@@ -57,9 +60,9 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
         if (decision?.type === "reply") return decision.text;
         if (!canUseTools) break;
 
-        messages.push({ role: "assistant", content: result.text.slice(0, 16000) || "{}" });
+        const modelDecision: ChatMessage = { role: "assistant", content: sliceUtf16Safe(result.text, 0, 16_000) || "{}" };
         if (!decision || !available.has(decision.name)) {
-            messages.push({ role: "user", content: "Return a valid JSON reply or call a tool from the catalog." });
+            trace.push([modelDecision, { role: "user", content: "Return a valid JSON reply or call a tool from the catalog." }]);
             continue;
         }
 
@@ -77,12 +80,38 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
         }
         signal.throwIfAborted();
         options.onTool(decision.name, output, failed);
-        messages.push({
+        trace.push([modelDecision, {
             role: "user",
-            content: JSON.stringify({ tool: decision.name, output: output.slice(0, 12000) }),
-        });
+            content: JSON.stringify({ tool: decision.name, output: boundToolResult(output), failed }),
+        }]);
     }
     return "Alcancé el límite de pasos sin una respuesta final. Revisa la actividad de la conversación antes de continuar.";
+}
+
+function fitTurnMessages(history: ChatMessage[], trace: ChatMessage[][]): ChatMessage[] {
+    const goal = history.at(-1);
+    if (!goal) return [];
+    let remaining = Math.max(0, 64_000 - goal.content.length);
+    const included: ChatMessage[][] = [];
+    for (let index = trace.length - 1; index >= 0; index--) {
+        const pair = trace[index];
+        const size = pair.reduce((total, message) => total + message.content.length, 0);
+        if (size > remaining) break;
+        remaining -= size;
+        included.unshift(pair);
+    }
+    const previous: ChatMessage[] = [];
+    for (let index = history.length - 2; index >= 0; index--) {
+        const message = history[index];
+        if (message.content.length > remaining) break;
+        remaining -= message.content.length;
+        previous.unshift(message);
+    }
+    if (previous[0]?.role === "assistant") previous.shift();
+    const omission: ChatMessage[] = included.length === trace.length ? [] : [
+        { role: "user", content: "Se omitieron resultados antiguos para conservar el contexto reciente." },
+    ];
+    return [...previous, goal, ...omission, ...included.flat()];
 }
 
 function decodeDecision(text: string): z.infer<typeof decisionSchema> | undefined {
