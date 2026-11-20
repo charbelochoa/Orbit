@@ -156,5 +156,5 @@ async function main() {
 
 main().catch(e => {
     console.error("Error fatal:", e.message);
-    process.exit(process.exitCode || 1);
+    process.exitCode ||= 1;
 });

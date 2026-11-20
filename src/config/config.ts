@@ -5,6 +5,7 @@
 
 import fs from "fs";
 import path from "path";
+import { Console } from "node:console";
 import dotenv from "dotenv";
 import { parse as parseYaml } from "yaml";
 import { orbitConfigSchema, type OrbitConfig } from "./schema.js";
@@ -13,7 +14,7 @@ import { ORBIT_HOME, PROJECT_ROOT } from "./paths.js";
 
 dotenv.config({ path: path.join(ORBIT_HOME, ".env") });
 
-const log = createLogger("config");
+const log = createLogger("config", new Console({ stdout: process.stderr, stderr: process.stderr }));
 let _config: OrbitConfig | null = null;
 
 // ── Config refresh handlers ──────────────────────────────────────────────────

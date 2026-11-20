@@ -91,7 +91,7 @@ function redactArgs(args: any[]): any[] {
  * Backward-compatible: `createLogger("ModuleName")` still works exactly as before.
  * Colors are applied automatically when stdout is a TTY.
  */
-export function createLogger(subsystem: string): Logger {
+export function createLogger(subsystem: string, output = console): Logger {
     const key = subsystem.toLowerCase();
     const color = isTTY ? (SUBSYSTEM_COLORS[key] ?? "\x1b[0m") : "";
     const reset = isTTY ? RESET : "";
@@ -103,9 +103,9 @@ export function createLogger(subsystem: string): Logger {
     }
 
     return {
-        debug: (...args: any[]) => { if (shouldLog("debug")) console.debug(prefix, ...redactArgs(args)); },
-        info:  (...args: any[]) => { if (shouldLog("info"))  console.log(prefix, ...redactArgs(args)); },
-        warn:  (...args: any[]) => { if (shouldLog("warn"))  console.warn(prefix, ...redactArgs(args)); },
-        error: (...args: any[]) => { if (shouldLog("error")) console.error(prefix, ...redactArgs(args)); },
+        debug: (...args: any[]) => { if (shouldLog("debug")) output.debug(prefix, ...redactArgs(args)); },
+        info:  (...args: any[]) => { if (shouldLog("info"))  output.log(prefix, ...redactArgs(args)); },
+        warn:  (...args: any[]) => { if (shouldLog("warn"))  output.warn(prefix, ...redactArgs(args)); },
+        error: (...args: any[]) => { if (shouldLog("error")) output.error(prefix, ...redactArgs(args)); },
     };
 }
