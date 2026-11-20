@@ -160,7 +160,19 @@ function handle(msg){
     case 'task_resumed':upsertTask(msg.id,{status:'running'});break;
     case 'visual_loop_status':updateVisualBar(msg.status,msg.goal);break;
     case 'visual_loop_step':updateVisualBar('running',null,msg.loop,msg.maxLoops,msg.action);break;
-    case 'memory':if(msg.key)updateMem(msg.key,msg.value,msg.ts);break;
+    case 'memory':
+    case 'memory_data':
+      if(msg.data&&typeof msg.data==='object'){
+        memData=Object.create(null);
+        for(const [section, entries] of Object.entries(msg.data)){
+          if(!entries||typeof entries!=='object')continue;
+          for(const [key, entry] of Object.entries(entries)){
+            if(typeof entry?.value==='string')memData[section+'/'+key]={value:entry.value,ts:''};
+          }
+        }
+        renderMemList();
+      }else if(msg.key)updateMem(msg.key,msg.value,msg.ts);
+      break;
     case 'status':if(Array.isArray(msg.tasks))msg.tasks.slice().reverse().forEach(task=>upsertTask(task.id,{title:task.goal,status:task.status,summary:task.error||task.result,createdAt:task.createdAt}));if(msg.workspace&&!getActiveConv()?.workspace){defaultWorkspace=msg.workspace;updateTopbarTitle();}if(msg.gemini!==undefined){voiceConfigured=msg.gemini;setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');}if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
     case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'command_result':addOrbitBubble(msg.text||msg.message||'OK');setSendMode(false);break;

@@ -3,11 +3,25 @@
  * Reads and searches the long-term memory store.
  */
 
-import { loadMemory }          from "../../memory/memory-manager.js";
+import { forgetMemoryNote, loadMemory, memoryNoteKey, updateMemory } from "../../memory/memory-manager.js";
 import type { CommandHandler } from "../types.js";
 
 export const memoryCommand: CommandHandler = async (ctx) => {
     const sub = ctx.subcommand;
+    if (sub === "remember" || sub === "forget") {
+        const key = ctx.args[1]?.toLowerCase() ?? "";
+        if (!memoryNoteKey.test(key) || ["__proto__", "prototype", "constructor"].includes(key)) {
+            return "Usa una etiqueta de hasta 48 letras, números, guiones o guiones bajos.";
+        }
+        if (sub === "forget") {
+            const forgotten = await forgetMemoryNote(key);
+            return forgotten ? `Olvidé la nota ${key}.` : `No encontré una nota con la etiqueta ${key}.`;
+        }
+        const value = ctx.args.slice(2).join(" ").trim();
+        if (!value || value.length > 300) return "Uso: /memory remember <etiqueta> <texto de hasta 300 caracteres>";
+        await updateMemory({ notes: { [key]: { value } } });
+        return `Guardé la nota ${key}.`;
+    }
     const mem = await loadMemory();
 
     // ── show (default) ───────────────────────────────────────────────────────
@@ -49,5 +63,5 @@ export const memoryCommand: CommandHandler = async (ctx) => {
         return "Para borrar la memoria, elimina el archivo data/memory/long_term.json manualmente.";
     }
 
-    return "Subcomandos: show | search <query>";
+    return "Usa /memory show, /memory search <consulta>, /memory remember <etiqueta> <texto> o /memory forget <etiqueta>.";
 };

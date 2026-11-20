@@ -2,13 +2,12 @@ import { APP_DATA } from "../config/paths.js";
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
-import { GoogleGenAI } from "@google/genai";
-import dotenv from "dotenv";
+import { generateText } from "../providers/registry.js";
+import { withFileMutation, writeFileAtomically } from "../core/file-access.js";
+import { z } from "zod";
 import { createLogger } from "../infra/logger.js";
 import { VectorMemoryStore, type MemorySearchResult } from "./vector-store.js";
 import { expandQuery } from "./query-expansion.js";
-
-dotenv.config();
 
 const log = createLogger("memory");
 const MEMORY_PATH = path.join(APP_DATA, "memory", "long_term.json");
@@ -50,7 +49,9 @@ function emptyMemory(): MemoryStore {
 export async function loadMemory(): Promise<MemoryStore> {
     try {
         const raw = await fs.readFile(MEMORY_PATH, "utf-8");
-        return JSON.parse(raw) as MemoryStore;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return emptyMemory();
+        return { ...emptyMemory(), ...parsed };
     } catch {
         return emptyMemory();
     }
@@ -58,53 +59,46 @@ export async function loadMemory(): Promise<MemoryStore> {
 
 async function saveMemory(mem: MemoryStore): Promise<void> {
     await fs.mkdir(path.dirname(MEMORY_PATH), { recursive: true });
-    await fs.writeFile(MEMORY_PATH, JSON.stringify(mem, null, 2), "utf-8");
+    await writeFileAtomically(MEMORY_PATH, JSON.stringify(mem, null, 2));
 }
 
-// Auto-save: persist memory to disk every 5 minutes (resilience)
-let _autoSaveTimer: ReturnType<typeof setInterval> | null = null;
-export function startMemoryAutoSave(): void {
-    if (_autoSaveTimer) return;
-    _autoSaveTimer = setInterval(async () => {
-        try {
-            const mem = await loadMemory();
-            await saveMemory(mem);
-            console.log("[Memory] Auto-save completado");
-        } catch (e: any) {
-            console.warn("[Memory] Auto-save falló:", e.message);
-        }
-    }, 5 * 60 * 1000);
-    console.log("[Memory] Auto-save activado (cada 5 min)");
-}
-
-function mergeInto(target: any, updates: any): boolean {
-    let changed = false;
-    for (const [k, v] of Object.entries(updates)) {
-        if (!v) continue;
-        const entry = typeof v === "object" && (v as any).value !== undefined
-            ? { value: String((v as any).value).slice(0, 300) }
-            : { value: String(v).slice(0, 300) };
-        if (JSON.stringify(target[k]) !== JSON.stringify(entry)) {
-            target[k] = entry;
-            changed = true;
-        }
-    }
-    return changed;
-}
+const sections = ["identity", "preferences", "relationships", "notes"] as const;
+export const memoryNoteKey = /^[\p{L}\p{N}_-]{1,48}$/u;
+const memoryFields = z.record(z.string(), z.object({ value: z.string().trim().min(1).max(300) }));
+const memoryUpdates = z.object({
+    identity: memoryFields.optional(),
+    preferences: memoryFields.optional(),
+    relationships: memoryFields.optional(),
+    notes: memoryFields.optional(),
+});
 
 export async function updateMemory(updates: Partial<MemoryStore>): Promise<void> {
-    const mem = await loadMemory();
-    let changed = false;
-    for (const [section, data] of Object.entries(updates)) {
-        if (data && typeof data === "object") {
-            if (!mem[section as keyof MemoryStore]) (mem as any)[section] = {};
-            if (mergeInto((mem as any)[section], data)) changed = true;
+    const validated = memoryUpdates.parse(updates);
+    await withFileMutation([MEMORY_PATH], async () => {
+        const memory = await loadMemory();
+        let changed = false;
+        for (const section of sections) {
+            const current = memory[section] ||= {};
+            const entries = Object.entries(validated[section] ?? {});
+            for (const [key, entry] of entries) {
+                if (!memoryNoteKey.test(key) || ["__proto__", "prototype", "constructor"].includes(key)) continue;
+                if (current[key]?.value === entry.value) continue;
+                current[key] = entry;
+                changed = true;
+            }
         }
-    }
-    if (changed) {
-        await saveMemory(mem);
-        console.log("[Memory] Memoria actualizada:", Object.keys(updates));
-    }
+        if (changed) await saveMemory(memory);
+    });
+}
+
+export async function forgetMemoryNote(key: string): Promise<boolean> {
+    return withFileMutation([MEMORY_PATH], async () => {
+        const memory = await loadMemory();
+        if (!memory.notes || !Object.hasOwn(memory.notes, key)) return false;
+        delete memory.notes[key];
+        await saveMemory(memory);
+        return true;
+    });
 }
 
 export function formatMemoryForPrompt(mem: MemoryStore): string {
@@ -123,29 +117,30 @@ export function formatMemoryForPrompt(mem: MemoryStore): string {
     return "[MEMORIA DEL USUARIO]\n" + lines.map(l => `- ${l}`).join("\n");
 }
 
-export async function maybeUpdateMemoryAsync(userText: string, assistantText: string): Promise<void> {
+export async function maybeUpdateMemoryAsync(userText: string): Promise<void> {
+    if (process.env.ORBIT_AUTO_MEMORY !== "1") return;
     _turnCounter++;
-    if (_turnCounter % MEMORY_EVERY_N_TURNS !== 0) return;
-    if (userText.length < 10 || userText === _lastInput) return;
+    if (_turnCounter % MEMORY_EVERY_N_TURNS !== 0 || userText.length < 10 || userText === _lastInput) return;
     _lastInput = userText;
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return;
     try {
-        const ai = new GoogleGenAI({ apiKey });
-        const check = await ai.models.generateContent({
-            model: "gemini-2.5-flash-lite",
-            contents: [{ role: "user", parts: [{ text: `Does this message contain personal facts about the user (name, age, city, job, hobby, relationship, birthday, preference)? Reply ONLY YES or NO.\n\nMessage: ${userText.slice(0, 300)}` }] }]
+        const response = await generateText({
+            systemPrompt: [
+                "Extract stable preferences the user stated about themselves. Return a JSON object or {}.",
+                'Use {"preferences":{"key":{"value":"..."}}, "notes":{"key":{"value":"..."}}}.',
+                "Exclude passwords, access tokens, private identifiers and temporary or inferred facts.",
+            ].join(" "),
+            messages: [{ role: "user", content: userText.slice(0, 1200) }],
+            responseFormat: "json",
+            maxTokens: 512,
+            signal: AbortSignal.timeout(15_000),
         });
-        if (!check.text?.toUpperCase().includes("YES")) return;
-        const extract = await ai.models.generateContent({
-            model: "gemini-2.5-flash-lite",
-            contents: [{ role: "user", parts: [{ text: `Extract personal facts. Return ONLY valid JSON or {} if nothing:\n{"identity":{"name":{"value":"..."}},"preferences":{"hobby":{"value":"..."}},"notes":{"job":{"value":"..."}}}\n\nMessage: ${userText.slice(0, 500)}\n\nJSON:` }] }]
-        });
-        const raw = (extract.text || "{}").replace(/```(json)?/gi, "").trim();
-        const data = JSON.parse(raw);
-        if (Object.keys(data).length) await updateMemory(data);
-    } catch (e: any) {
-        if (!e.message?.includes("429")) log.warn(e.message);
+        const raw = response.text.trim().replace(/^\x60{3}(?:json)?\s*|\s*\x60{3}$/gi, "");
+        const parsed = memoryUpdates.parse(JSON.parse(raw));
+        if (parsed.preferences || parsed.notes) {
+            await updateMemory({ preferences: parsed.preferences, notes: parsed.notes });
+        }
+    } catch {
+        log.debug("No se actualizaron las preferencias del turno.");
     }
 }
 

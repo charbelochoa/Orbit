@@ -2,7 +2,7 @@ import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync, startMemoryAutoSave } from "./memory/memory-manager.js";
+import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync } from "./memory/memory-manager.js";
 import { addMessage, getHistory } from "./memory/chat-history.js";
 import { startGateway, broadcast, updateTokenUsage, onElectronConnected, type ChatTurn, type VoiceTurn } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
@@ -33,6 +33,7 @@ import { buildProjectContext } from "./context/project-facts.js";
 import { skillRegistry } from "./skills/registry.js";
 import { policyEngine } from "./core/tool-policy.js";
 import { getQueue } from "./agent/task-queue.js";
+import { fenceRecalledContext } from "./context/memory-fence.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = createLogger("Orbit");
@@ -119,7 +120,7 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
             instructions: skill.content.slice(0, 1000),
         }));
         const deadline = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
-        const reply = await runHarnessTurn({
+        const rawReply = await runHarnessTurn({
             systemPrompt: getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX"), project) +
                 "\n\nSkills para esta tarea\n" + JSON.stringify(skills),
             messages: [...history, { role: "user", content: text }],
@@ -139,10 +140,12 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
             },
             onUsage: updateTokenUsage,
         });
+        const reply = fenceRecalledContext(rawReply) || "No pude componer la respuesta.";
         addMessage(sessionId, "user", text);
         addMessage(sessionId, "assistant", reply);
         send({ type: "orbit_message", text: reply });
         success = true;
+        void maybeUpdateMemoryAsync(text).catch(() => {});
     } catch (error) {
         if (signal.aborted) {
             send({ type: "orbit_message", text: "Turno cancelado." });
@@ -196,10 +199,11 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
             send({ type: "user_message", text: result.user });
             wakeWordMonitor.check(result.user);
         }
-        if (result.assistant) {
-            addMessage(sessionId, "assistant", result.assistant);
-            send({ type: "orbit_message", text: result.assistant });
-            if (result.user) void maybeUpdateMemoryAsync(result.user, result.assistant).catch(() => {});
+        const reply = fenceRecalledContext(result.assistant);
+        if (reply) {
+            addMessage(sessionId, "assistant", reply);
+            send({ type: "orbit_message", text: reply });
+            if (result.user) void maybeUpdateMemoryAsync(result.user).catch(() => {});
         }
     } catch {
         send({
@@ -272,7 +276,6 @@ async function main() {
     pruneOldEntries();
 
     // Phase 10: Memory auto-save every 5 minutes
-    startMemoryAutoSave();
 
     // Start gateway FIRST so it's ready when web UI connects
     await startGateway(announce, chat, voice, config.server);

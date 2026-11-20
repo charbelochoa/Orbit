@@ -1,3 +1,5 @@
+import { buildMemoryContextBlock } from "../context/memory-fence.js";
+
 export const getSystemPrompt = (memoryContext: string, currentDateTime: string, projectContext = "") => `
 Eres Orbit, el asistente de escritorio del usuario. Habla en su idioma y usa un tono cercano y directo.
 
@@ -14,7 +16,7 @@ Hora local
 ${currentDateTime}
 
 Memoria del usuario
-${memoryContext}
+${buildMemoryContextBlock(memoryContext)}
 
 Proyecto y convenciones
 ${projectContext}
