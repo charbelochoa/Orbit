@@ -10,6 +10,23 @@ export enum TaskPriority {
     HIGH = 3,
 }
 
+interface QueueEntry {
+    id: string;
+    priority: TaskPriority;
+    enqueuedAt: number;
+    sequence: number;
+}
+
+const PRIORITY_HEAD_START_MS = 15_000;
+
+function compareQueueEntries(left: QueueEntry, right: QueueEntry): number {
+    return (
+        left.enqueuedAt -
+        right.enqueuedAt +
+        (right.priority - left.priority) * PRIORITY_HEAD_START_MS || left.sequence - right.sequence
+    );
+}
+
 export interface Task {
     id: string;
     goal: string;
@@ -27,7 +44,8 @@ export interface Task {
 
 class TaskQueue {
     private tasks = new Map<string, Task>();
-    private pending: string[] = [];
+    private pending: QueueEntry[] = [];
+    private nextSequence = 0;
     private runningCount = 0;
     private maxConcurrent = 3;
     private static instance: TaskQueue;
@@ -51,13 +69,10 @@ class TaskQueue {
         };
         this.tasks.set(id, task);
 
-        // Insert into pending list sorted by priority (highest first)
-        const insertIdx = this.pending.findIndex(pid => {
-            const t = this.tasks.get(pid);
-            return t ? t.priority < priority : false;
-        });
-        if (insertIdx === -1) this.pending.push(id);
-        else this.pending.splice(insertIdx, 0, id);
+        const entry = { id, priority, enqueuedAt: performance.now(), sequence: this.nextSequence++ };
+        const insertIdx = this.pending.findIndex(queued => compareQueueEntries(entry, queued) < 0);
+        if (insertIdx === -1) this.pending.push(entry);
+        else this.pending.splice(insertIdx, 0, entry);
 
         log.info(`Tarea '${id}' creada (prioridad: ${TaskPriority[priority]}): ${goal.slice(0, 60)}`);
         broadcast({ type: "task_created", id, goal });
@@ -68,7 +83,7 @@ class TaskQueue {
 
     private async processNext() {
         while (this.runningCount < this.maxConcurrent && this.pending.length > 0) {
-            const id = this.pending.shift()!;
+            const { id } = this.pending.shift()!;
             const task = this.tasks.get(id);
             if (!task || task.status !== "pending") continue;
 
@@ -149,7 +164,7 @@ class TaskQueue {
         if (task.status === "pending") {
             task.status = "cancelled";
             task.endedAt = new Date();
-            this.pending = this.pending.filter(pid => pid !== id);
+            this.pending = this.pending.filter(entry => entry.id !== id);
             log.info(`Tarea cancelada (pendiente): ${id}`);
             broadcast({ type: "task_cancelled", id });
             return true;
