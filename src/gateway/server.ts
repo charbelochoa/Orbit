@@ -430,14 +430,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 : payload?.priority === "low"
                     ? TaskPriority.LOW
                     : TaskPriority.NORMAL;
-            const taskIds: string[] = [];
-            for (const goal of goals) {
-                if (typeof goal !== "string" || !goal.trim()) continue;
-                const taskId = getQueue().submit(goal.trim(), priority, (update: string) => {
-                    broadcast({ type: "task_update", taskId, message: update });
-                });
-                taskIds.push(taskId);
-            }
+            const taskIds = getQueue().submitBatch(goals, priority);
             client.ws.send(JSON.stringify({ type: "batch_queued", taskIds, count: taskIds.length }));
             break;
         }

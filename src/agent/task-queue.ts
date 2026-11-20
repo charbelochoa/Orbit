@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { AgentExecutor } from "./executor.js";
 import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
@@ -33,6 +34,7 @@ export interface Task {
     id: string;
     goal: string;
     workspace: string;
+    dependsOn?: string;
     priority: TaskPriority;
     status: "pending" | "running" | "paused" | "done" | "failed" | "cancelled";
     createdAt: Date;
@@ -74,26 +76,29 @@ class TaskQueue {
      * Submit a new task. Returns task ID immediately.
      */
     submit(goal: string, priority: TaskPriority = TaskPriority.NORMAL, speak?: (msg: string) => void): string {
-        if (typeof goal !== "string" || !goal.trim() || goal.length > 32_000) {
-            throw new Error("Indica un objetivo de hasta 32 000 caracteres.");
-        }
-        const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        const task: Task = {
-            id, goal, priority, workspace: workspaceRoot(),
-            status: "pending",
-            createdAt: new Date(),
-            output: [],
-            speak,
-        };
-        this.store.save(task);
-        this.tasks.set(id, task);
-        this.enqueue(task);
+        return this.submitBatch([goal], priority, speak)[0];
+    }
 
-        log.info(`Tarea '${id}' creada (prioridad: ${TaskPriority[priority]}): ${goal.slice(0, 60)}`);
-        broadcast({ type: "task_created", id, goal });
+    submitBatch(goals: string[], priority: TaskPriority = TaskPriority.NORMAL, speak?: (msg: string) => void): string[] {
+        if (!goals.length || goals.length > 32 || goals.some(goal => typeof goal !== "string" || !goal.trim() || goal.length > 32_000)) {
+            throw new Error("Indica entre 1 y 32 objetivos de hasta 32 000 caracteres cada uno.");
+        }
+        const workspace = workspaceRoot();
+        const ids = goals.map(() => `task_${randomUUID()}`);
+        const createdAt = new Date();
+        const tasks: Task[] = goals.map((goal, index) => ({
+            id: ids[index], goal: goal.trim(), workspace, priority, status: "pending",
+            createdAt, output: [], speak, dependsOn: ids[index - 1],
+        }));
+        this.store.saveBatch(tasks);
+        for (const task of tasks) {
+            this.tasks.set(task.id, task);
+            this.enqueue(task);
+            broadcast({ type: "task_created", id: task.id, goal: task.goal });
+        }
 
         this.processNext();
-        return id;
+        return ids;
     }
 
     private enqueue(task: Task): void {
@@ -110,11 +115,23 @@ class TaskQueue {
 
     private processNext(): void {
         while (this.runningCount < this.maxConcurrent && this.pending.length > 0) {
-            const { id } = this.pending.shift()!;
+            const index = this.pending.findIndex(({ id }) => {
+                const dependency = this.tasks.get(id)?.dependsOn;
+                const previous = dependency && this.tasks.get(dependency);
+                return !previous || ["done", "failed", "cancelled"].includes(previous.status);
+            });
+            if (index < 0) return;
+            const [{ id }] = this.pending.splice(index, 1);
             const task = this.tasks.get(id);
             if (!task || task.status !== "pending") continue;
 
             try {
+                if (task.dependsOn && this.tasks.get(task.dependsOn)?.status !== "done") {
+                    const error = "No se completó la tarea anterior de este flujo.";
+                    this.update(task, { status: "failed", endedAt: new Date(), error });
+                    broadcast({ type: "task_failed", id, error });
+                    continue;
+                }
                 this.update(task, { status: "running", startedAt: new Date() });
             } catch (error) {
                 this.enqueue(task);
@@ -201,6 +218,7 @@ class TaskQueue {
             this.pending = this.pending.filter(entry => entry.id !== id);
             log.info(`Tarea cancelada (pendiente): ${id}`);
             broadcast({ type: "task_cancelled", id });
+            this.processNext();
             return true;
         }
 
@@ -265,10 +283,11 @@ class TaskQueue {
      */
     prune(maxAgeMs = 30 * 60_000): void {
         const now = Date.now();
+        const prerequisites = new Set(this.pending.map(entry => this.tasks.get(entry.id)?.dependsOn));
         for (const [id, task] of this.tasks.entries()) {
             const terminal = ["done", "failed", "cancelled"].includes(task.status);
             const age = task.endedAt ? now - task.endedAt.getTime() : 0;
-            if (terminal && age > maxAgeMs) {
+            if (terminal && age > maxAgeMs && !prerequisites.has(id)) {
                 this.store.delete(id);
                 this.tasks.delete(id);
             }

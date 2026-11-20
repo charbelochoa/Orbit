@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { APP_DATA } from "../config/paths.js";
 import type { Task } from "./task-queue.js";
+import { inTransaction } from "../memory/sqlite.js";
 
 type TaskRow = Pick<Task, "id" | "goal" | "workspace" | "priority" | "status"> & {
     created_at: number;
@@ -11,6 +12,7 @@ type TaskRow = Pick<Task, "id" | "goal" | "workspace" | "priority" | "status"> &
     output: string;
     result: string | null;
     error: string | null;
+    depends_on: string | null;
 };
 
 export class TaskStore {
@@ -33,9 +35,13 @@ export class TaskStore {
                 ended_at INTEGER,
                 output TEXT NOT NULL,
                 result TEXT,
-                error TEXT
+                error TEXT,
+                depends_on TEXT
             );
         `);
+        if (!this.database.prepare("PRAGMA table_info(tasks)").all().some(column => column.name === "depends_on")) {
+            this.database.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
+        }
     }
 
     recover(): Task[] {
@@ -56,20 +62,27 @@ export class TaskStore {
             output: JSON.parse(row.output),
             result: row.result ?? undefined,
             error: row.error ?? undefined,
+            dependsOn: row.depends_on ?? undefined,
         }));
     }
 
     save(task: Task): void {
         this.database.prepare(`
-            INSERT INTO tasks (id, goal, workspace, priority, status, created_at, started_at, ended_at, output, result, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, goal, workspace, priority, status, created_at, started_at, ended_at, output, result, error, depends_on)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET status = excluded.status, started_at = excluded.started_at,
                 ended_at = excluded.ended_at, output = excluded.output, result = excluded.result, error = excluded.error
         `).run(
             task.id, task.goal, task.workspace, task.priority, task.status, task.createdAt.getTime(),
             task.startedAt?.getTime() ?? null, task.endedAt?.getTime() ?? null, JSON.stringify(task.output),
-            task.result ?? null, task.error ?? null,
+            task.result ?? null, task.error ?? null, task.dependsOn ?? null,
         );
+    }
+
+    saveBatch(tasks: Task[]): void {
+        inTransaction(this.database, () => {
+            for (const task of tasks) this.save(task);
+        });
     }
 
     delete(id: string): void {

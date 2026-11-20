@@ -67,12 +67,8 @@ export const batchCommand: CommandHandler = async (ctx) => {
     }
 
     // ── Enqueue each goal ───────────────────────────────────────────────────
-    const taskIds: string[] = [];
-    for (const goal of goals) {
-        const taskId = getQueue().submit(goal, TaskPriority.NORMAL, ctx.speakFn);
-        taskIds.push(taskId);
-        ctx.sendReply({ type: "task_queued", taskId, goal });
-    }
+    const taskIds = getQueue().submitBatch(goals, TaskPriority.NORMAL, ctx.speakFn);
+    taskIds.forEach((taskId, index) => ctx.sendReply({ type: "task_queued", taskId, goal: goals[index] }));
 
     const lines = [
         `✓ Pipeline de ${goals.length} tarea(s) iniciado:`,
