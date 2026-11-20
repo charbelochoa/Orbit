@@ -47,8 +47,8 @@ export const orbitConfigSchema = z.object({
     }).default(() => ({ approvalRequired: false, allowedPaths: [] as string[] })),
 
     server: z.object({
-        gatewayPort: z.number().default(18789),
-        webPort:     z.number().default(3000),
+        gatewayPort: z.number().int().min(1024).max(65535).default(18789),
+        webPort:     z.number().int().min(1024).max(65535).default(3000),
     }).default(() => ({ gatewayPort: 18789, webPort: 3000 })),
 
     engine: z.object({

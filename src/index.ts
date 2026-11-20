@@ -53,7 +53,7 @@ let pythonEngine: ChildProcess | null = null;
 let _engineHeartbeatId: ReturnType<typeof setInterval> | null = null;
 
 function startPythonEngine() {
-    const enginePath = path.join(__dirname, "../engine/orbit_engine.py");
+    const enginePath = path.join(process.env.ORBIT_ENGINE_DIR || path.join(__dirname, "../engine"), "orbit_engine.py");
     log.info("Iniciando Python Vision Engine...");
     if (_engineHeartbeatId) {
         clearInterval(_engineHeartbeatId);
@@ -350,14 +350,15 @@ async function main() {
     startMemoryAutoSave();
 
     // Start gateway FIRST so it's ready when web UI connects
-    startGateway(announce, chat);
-    await startWebServer(config.server.webPort);
+    await startGateway(announce, chat, config.server);
+    await startWebServer(config.server.webPort, config.server.gatewayPort);
+    process.send?.({ type: "orbit-ready", ...config.server });
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));
-    startPythonEngine();
+    if (process.env.ORBIT_VISION_ENGINE === "1") startPythonEngine();
     await connectGemini();
 
-    process.on("SIGINT", () => {
+    const stop = () => {
         log.info("Cerrando Orbit...");
         proactiveService.stop();
         ruleEngine.stop();
@@ -369,19 +370,12 @@ async function main() {
         killPS();
         if (pythonEngine) pythonEngine.kill();
         process.exit(0);
-    });
-
-    process.on("SIGTERM", () => {
-        proactiveService.stop();
-        ruleEngine.stop();
-        notificationService.stop();
-        wakeWordMonitor.stop();
-        errorWatcher.stop();
-        void codebaseIndexer.stop();
-        ambientService.stop();
-        killPS();
-        if (pythonEngine) pythonEngine.kill();
-        process.exit(0);
+    };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    if (process.connected) process.on("disconnect", stop);
+    process.on("message", message => {
+        if (message && typeof message === "object" && "type" in message && message.type === "orbit-stop") stop();
     });
 }
 

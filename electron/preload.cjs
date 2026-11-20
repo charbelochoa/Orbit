@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("orbitElectron", {
 
     // Plataforma del SO
     platform: process.platform,
+    openProviderSettings: () => ipcRenderer.invoke("orbit:open-config"),
 
     // Enviar evento al main process
     send: (channel, data) => {

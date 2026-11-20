@@ -8,23 +8,12 @@ import { loopRegistry } from "../agent/loop-registry.js";
 import { browserControl } from "../actions/browser-control.js";
 import { clearHistory } from "../memory/chat-history.js";
 
-const PORT = 18789;
-
 // ── Session auth token (generated per process lifetime) ──────────────
 const SESSION_TOKEN = crypto.randomBytes(32).toString("hex");
 const _authenticatedClients = new Set<string>();
 
 /** Retrieve the session token (used by Electron/CLI to auto-authenticate). */
 export function getSessionToken(): string { return SESSION_TOKEN; }
-
-// Allowed WebSocket origins (localhost variants only)
-const ALLOWED_ORIGINS = new Set([
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    `http://localhost:${PORT}`,
-    `http://127.0.0.1:${PORT}`,
-    undefined,  // same-machine connections with no Origin header (Electron, CLI, curl)
-]);
 
 interface Client {
     id: string;
@@ -117,17 +106,22 @@ function isRateLimited(client: Client): boolean {
     return false;
 }
 
-export function startGateway(speakFn: (text: string) => void, chat: ChatHandler) {
-    const wss = new WebSocketServer({ port: PORT, host: "127.0.0.1", maxPayload: 4 * 1024 * 1024 });
+export async function startGateway(
+    speakFn: (text: string) => void,
+    chat: ChatHandler,
+    { gatewayPort, webPort }: { gatewayPort: number; webPort: number },
+) {
+    const allowedOrigins = new Set([undefined, `http://127.0.0.1:${webPort}`, `http://localhost:${webPort}`]);
+    const wss = new WebSocketServer({ port: gatewayPort, host: "127.0.0.1", maxPayload: 4 * 1024 * 1024 });
 
     wss.on("listening", () => {
-        console.log(`[Gateway] WebSocket Gateway escuchando en ws://localhost:${PORT}`);
+        console.log(`[Gateway] WebSocket Gateway escuchando en ws://127.0.0.1:${gatewayPort}`);
     });
 
     wss.on("connection", (ws, req) => {
         // Origin validation — reject connections from unexpected origins
         const origin = req.headers.origin;
-        if (!ALLOWED_ORIGINS.has(origin)) {
+        if (!allowedOrigins.has(origin)) {
             console.warn(`[Gateway] Conexión rechazada — origen no permitido: ${origin}`);
             ws.close(1008, "Origin not allowed");
             return;
@@ -136,7 +130,7 @@ export function startGateway(speakFn: (text: string) => void, chat: ChatHandler)
         const id = crypto.randomUUID();
 
         // Check for auth token in URL query: ws://localhost:18789?token=<SESSION_TOKEN>
-        const url = new URL(req.url || "/", `http://localhost:${PORT}`);
+        const url = new URL(req.url || "/", `http://127.0.0.1:${gatewayPort}`);
         const token = url.searchParams.get("token");
         const tokenValid = token !== null && token.length === SESSION_TOKEN.length &&
             crypto.timingSafeEqual(
@@ -194,6 +188,11 @@ export function startGateway(speakFn: (text: string) => void, chat: ChatHandler)
             console.error(`[Gateway] Error en cliente ${id}:`, err.message);
         });
     });
+    await new Promise<void>((resolve, reject) => {
+        wss.once("listening", resolve);
+        wss.once("error", reject);
+    });
+    return wss;
 }
 
 async function handleClientMessage(clientId: string, msg: any, speakFn: (text: string) => void, chat: ChatHandler) {

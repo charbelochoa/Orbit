@@ -6,12 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "electron": "electron .",
-    "electron:dev": "concurrently --kill-others --names \"BACKEND,ELECTRON\" --prefix-colors \"cyan,magenta\" \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron": "npm run build && electron .",
+    "electron:dev": "npm run electron",
     "build": "tsc",
     "build:electron": "tsc && electron-builder",
     "pack": "tsc && electron-builder --dir",
-    "start": "node --experimental-specifier-resolution=node dist/index.js",
+    "start": "node dist/index.js",
     "cli": "tsx src/cli.ts",
     "orbit:install": "tsx src/cli.ts install",
     "orbit:uninstall": "tsx src/cli.ts uninstall",
@@ -49,6 +49,8 @@
   "build": {
     "appId": "com.orbit.ai",
     "productName": "Orbit AI",
+    "asar": false,
+    "npmRebuild": false,
     "copyright": "Copyright © 2025 Orbit AI",
     "directories": {
       "output": "dist-installer"
@@ -56,10 +58,13 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
-      "src/ui/web/**/*",
-      "engine/**/*",
+      "src/ui/**/*",
       "assets/**/*",
-      ".env",
+      "config/**/*",
+      "skills/**/*",
+      "LICENSE-HERMES",
+      "LICENSE-OPENCLAW",
+      ".env.example",
       "package.json"
     ],
     "extraResources": [
@@ -70,10 +75,6 @@
           "**/*",
           "!models/.gitkeep"
         ]
-      },
-      {
-        "from": "config",
-        "to": "config"
       }
     ],
     "win": {

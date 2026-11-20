@@ -1,9 +1,8 @@
 ﻿"use strict";
 
-const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, screen, globalShortcut, clipboard } = require("electron");
+const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, screen, globalShortcut, clipboard, dialog } = require("electron");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
-const net = require("net");
 const fs = require("fs");
 
 const ROOT = path.join(__dirname, "..");
@@ -17,98 +16,119 @@ let overlayWindow = null;
 let tray = null;
 let backend = null;
 let isQuitting = false;
-let backendReady = false;
 let gatewayWs = null;
 let contextPanelVisible = false;
-let sessionToken = "";
+let webUrl = "";
+let gatewayPort = 0;
+let restartTimer;
+const startHidden = process.argv.includes("--background");
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", showMainWindow);
+}
 
 function log(msg)  { console.log(`[Electron] ${msg}`); }
 function warn(msg) { console.warn(`[Electron] ${msg}`); }
 function err(msg)  { console.error(`[Electron] ${msg}`); }
 
-function waitForPort(port, maxAttempts = 60, intervalMs = 500) {
+function orbitHome() {
+  return process.env.ORBIT_HOME || (IS_PACKED ? app.getPath("userData") : ROOT);
+}
+
+function startBackend() {
+  const entry = path.join(ROOT, "dist", "index.js");
+  if (!fs.existsSync(entry)) throw new Error("Falta la compilación del agente. Ejecuta npm run build.");
+  const workspace = process.env.ORBIT_WORKSPACE || (IS_PACKED ? app.getPath("documents") : ROOT);
+  const logDir = path.join(orbitHome(), "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logStream = fs.createWriteStream(path.join(logDir, "backend.log"), { flags: "a" });
+  const child = spawn(process.execPath, [entry], {
+    cwd: workspace,
+    env: {
+      ...process.env,
+      ORBIT_HOME: orbitHome(),
+      ORBIT_ENGINE_DIR: IS_PACKED ? path.join(process.resourcesPath, "engine") : path.join(ROOT, "engine"),
+      ELECTRON_RUN_AS_NODE: "1",
+    },
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+    windowsHide: true,
+  });
+  backend = child;
+  child.stdout.pipe(logStream, { end: false });
+  child.stderr.pipe(logStream, { end: false });
+  logStream.on("error", error => warn(error.message));
+
   return new Promise((resolve, reject) => {
-    let attempts = 0;
-    const tryConnect = () => {
-      const socket = new net.Socket();
-      socket.setTimeout(400);
-      socket.on("connect", () => { socket.destroy(); resolve(); });
-      socket.on("error", () => {
-        socket.destroy();
-        if (++attempts >= maxAttempts) reject(new Error(`Puerto ${port} no respondio`));
-        else setTimeout(tryConnect, intervalMs);
-      });
-      socket.on("timeout", () => {
-        socket.destroy();
-        if (++attempts >= maxAttempts) reject(new Error(`Puerto ${port} timeout`));
-        else setTimeout(tryConnect, intervalMs);
-      });
-      socket.connect(port, "127.0.0.1");
-    };
-    tryConnect();
+    let started = false;
+    const timer = setTimeout(() => {
+      reject(new Error("El agente no respondió al iniciar."));
+      child.kill();
+    }, 30_000);
+    child.on("message", message => {
+      if (message.type !== "orbit-ready") return;
+      started = true;
+      clearTimeout(timer);
+      webUrl = "http://127.0.0.1:" + message.webPort;
+      gatewayPort = message.gatewayPort;
+      resolve();
+    });
+    child.on("error", reject);
+    child.on("close", code => {
+      clearTimeout(timer);
+      logStream.end();
+      if (backend === child) backend = null;
+      if (!started) reject(new Error("El agente terminó con código " + code + "."));
+      if (started && !isQuitting) restartTimer = setTimeout(restartBackend, 3000);
+    });
   });
 }
 
-function isPortInUse(port) {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    socket.setTimeout(500);
-    socket.on("connect",  () => { socket.destroy(); resolve(true);  });
-    socket.on("error",    () => { socket.destroy(); resolve(false); });
-    socket.on("timeout",  () => { socket.destroy(); resolve(false); });
-    socket.connect(port, "127.0.0.1");
-  });
+async function restartBackend() {
+  if (isQuitting) return;
+  try {
+    await startBackend();
+    if (mainWindow && !mainWindow.isDestroyed()) await mainWindow.loadURL(webUrl);
+  } catch (error) {
+    if (!isQuitting) showStartupError(error);
+  }
 }
 
-async function startBackend() {
-  if (await isPortInUse(3000)) {
-    log("Backend ya esta corriendo en puerto 3000. Saltando spawn.");
-    backendReady = true;
-    return;
-  }
-  log("Iniciando backend...");
-  let cmd, args;
-  if (IS_PACKED) {
-    cmd = process.execPath;
-    args = [path.join(process.resourcesPath, "app", "dist", "index.js")];
-  } else {
-    const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-    cmd = npx;
-    args = ["tsx", "src/index.ts"];
-  }
-  backend = spawn(cmd, args, {
-    cwd: ROOT,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: false,
-  });
-  backend.stdout.on("data", (data) => {
-    const line = data.toString().trim();
-    if (line) process.stdout.write(`[Backend] ${line}\n`);
-    // Capture session token from gateway output
-    const tokenMatch = line.match(/\[Gateway\] Session token: ([a-f0-9]+)/);
-    if (tokenMatch) sessionToken = tokenMatch[1];
-    if (line.includes("Orbit esta en linea") || line.includes("Sesion lista")) {
-      backendReady = true;
-    }
-  });
-  backend.stderr.on("data", (data) => {
-    const line = data.toString().trim();
-    if (line) process.stderr.write(`[Backend] ${line}\n`);
-  });
-  backend.on("exit", (code, signal) => {
-    log(`Backend termino (codigo ${code}, senal ${signal})`);
-    backend = null;
-    backendReady = false;
-    if (!isQuitting) {
-      warn("Backend caido - reintentando en 3s...");
-      setTimeout(startBackend, 3000);
-    }
-  });
-  backend.on("error", (e) => {
-    err(`No se pudo iniciar backend: ${e.message}`);
-  });
+function showStartupError(error) {
+  const logPath = path.join(orbitHome(), "logs", "backend.log");
+  dialog.showErrorBox("Orbit no pudo iniciar", error.message + "\n\nRegistro: " + logPath);
 }
+
+async function openProviderSettings() {
+  const home = orbitHome();
+  const settings = path.join(home, ".env");
+  fs.mkdirSync(home, { recursive: true });
+  if (!fs.existsSync(settings)) fs.copyFileSync(path.join(ROOT, ".env.example"), settings, fs.constants.COPYFILE_EXCL);
+  if (process.platform === "win32") {
+    await new Promise((resolve, reject) => {
+      const editor = spawn("notepad.exe", [settings], { detached: true, stdio: "ignore" });
+      editor.once("error", reject);
+      editor.once("spawn", () => {
+        editor.unref();
+        resolve();
+      });
+    });
+    return "";
+  }
+  return shell.openPath(settings);
+}
+
+ipcMain.handle("orbit:open-config", event => {
+  if (!event.senderFrame?.url?.startsWith(webUrl + "/")) throw new Error("Origen de Orbit inválido.");
+  return openProviderSettings();
+});
 
 function createTray() {
   let icon;
@@ -122,8 +142,9 @@ function createTray() {
   const buildMenu = () => Menu.buildFromTemplate([
     { label: "Orbit AI", enabled: false },
     { type: "separator" },
-    { label: "Mostrar Orbit",      click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
-    { label: "Abrir en navegador", click: () => shell.openExternal("http://localhost:3000") },
+    { label: "Mostrar Orbit", click: showMainWindow },
+    { label: "Abrir en navegador", click: () => { if (webUrl) void shell.openExternal(webUrl); } },
+    { label: "Configurar proveedores", click: () => { void openProviderSettings().catch(showStartupError); } },
     { type: "separator" },
     { label: "Salir", click: () => { isQuitting = true; app.quit(); } },
   ]);
@@ -201,7 +222,7 @@ async function createWindow() {
   log("Creando ventana principal...");
   const PRELOAD = path.join(__dirname, "preload.cjs");
   mainWindow = new BrowserWindow({
-    width: 420, height: 720, minWidth: 360, minHeight: 560, maxWidth: 500,
+    width: 1120, height: 760, minWidth: 520, minHeight: 520,
     title: "Orbit AI", show: false, backgroundColor: "#09090b",
     frame: false, titleBarStyle: "hidden", transparent: false, resizable: true,
     webPreferences: {
@@ -210,11 +231,9 @@ async function createWindow() {
     },
     ...(fs.existsSync(ICON_PATH) ? { icon: ICON_PATH } : {}),
   });
-  await mainWindow.loadURL("http://localhost:3000");
   mainWindow.once("ready-to-show", () => {
     log("Ventana lista");
-    mainWindow.show();
-    mainWindow.focus();
+    if (!startHidden) showMainWindow();
   });
   mainWindow.on("close", (e) => {
     if (!isQuitting) {
@@ -227,6 +246,19 @@ async function createWindow() {
     }
   });
   mainWindow.on("closed", () => { mainWindow = null; });
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (new URL(url).origin !== webUrl) event.preventDefault();
+  });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  const session = mainWindow.webContents.session;
+  session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(contents === mainWindow?.webContents && permission === "media" &&
+      details.mediaTypes?.includes("audio") && !details.mediaTypes.includes("video"));
+  });
+  await mainWindow.loadURL(webUrl);
   if (!IS_PACKED) {
     mainWindow.webContents.on("before-input-event", (_e, input) => {
       if (input.key === "F12" && input.type === "keyDown") mainWindow.webContents.toggleDevTools();
@@ -239,7 +271,7 @@ function connectGatewayBridge() {
   try { WS = require("ws"); } catch (_) { return; }
   function tryConnect() {
     if (isQuitting) return;
-    const wsUrl = sessionToken ? `ws://localhost:18789?token=${sessionToken}` : "ws://localhost:18789";
+    const wsUrl = "ws://127.0.0.1:" + gatewayPort;
     try { gatewayWs = new WS.WebSocket(wsUrl); }
     catch (_) { setTimeout(tryConnect, 5000); return; }
     gatewayWs.on("open", () => {
@@ -491,29 +523,19 @@ function hideAgentBusy() {
 }
 
 app.whenReady().then(async () => {
-
-  startBackend();
-  log("Esperando backend en puerto 3000...");
-  try {
-    await waitForPort(3000, 60, 500);
-    log("Backend listo en puerto 3000");
-  } catch (e) {
-    err(`Backend no respondio: ${e.message}`);
-    err("Verifica que GEMINI_API_KEY este configurada en .env");
-  }
-  // Also wait for Gateway WebSocket server (18789) to avoid race conditions
-  log("Esperando gateway en puerto 18789...");
-  try {
-    await waitForPort(18789, 30, 500);
-    log("Gateway listo en puerto 18789");
-  } catch (e) {
-    warn(`Gateway no respondio a tiempo: ${e.message}. Continuando...`);
-  }
+  if (!app.hasSingleInstanceLock()) return;
+  app.setAppUserModelId("com.orbit.ai");
   createTray();
-  createOverlay();
-  await createWindow();
-  connectGatewayBridge();
-  registerGlobalHotkeys();
+  try {
+    await startBackend();
+    createOverlay();
+    await createWindow();
+    connectGatewayBridge();
+    registerGlobalHotkeys();
+  } catch (error) {
+    showStartupError(error);
+    app.quit();
+  }
 });
 
 app.on("activate", () => {
@@ -528,10 +550,12 @@ app.on("window-all-closed", (e) => {
 app.on("before-quit", () => {
   log("Cerrando Orbit...");
   isQuitting = true;
+  clearTimeout(restartTimer);
   globalShortcut.unregisterAll();
   if (gatewayWs) { try { gatewayWs.close(); } catch (_) {} gatewayWs = null; }
   if (backend) {
-    backend.kill("SIGTERM");
+    if (backend.connected) backend.send({ type: "orbit-stop" });
+    else backend.kill("SIGTERM");
     setTimeout(() => { if (backend) backend.kill("SIGKILL"); }, 2000);
   }
 });
