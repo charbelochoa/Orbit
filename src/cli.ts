@@ -15,6 +15,7 @@ Orbit AI — CLI
 
   orbit start         Inicia el agente y el panel local
   orbit chat          Interactive terminal chat (like Claude Code)
+  orbit ask <message> Envía una solicitud y escribe la respuesta en stdout
   orbit install       Register autostart task (Windows Task Scheduler)
   orbit uninstall     Remove autostart task
   orbit status        Show current daemon status
@@ -55,6 +56,11 @@ async function main() {
         case "chat": {
             const { runChat } = await import("./cli-chat.js");
             await runChat(rest);
+            break;
+        }
+        case "ask": {
+            const { runAsk } = await import("./cli-ask.js");
+            await runAsk(rest);
             break;
         }
 
@@ -109,5 +115,5 @@ async function main() {
 
 main().catch(e => {
     console.error("Error fatal:", e.message);
-    process.exit(1);
+    process.exit(process.exitCode || 1);
 });

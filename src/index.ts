@@ -107,6 +107,7 @@ function announce(text: string) {
 
 async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
     send({ type: "typing", state: "thinking" });
+    let success = false;
     try {
         const history = getHistory(sessionId, 24).flatMap<ChatMessage>(({ role, content }) =>
             role === "user" || role === "assistant" ? [{ role, content: content.slice(0, 8000) }] : [],
@@ -141,6 +142,7 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
         addMessage(sessionId, "user", text);
         addMessage(sessionId, "assistant", reply);
         send({ type: "orbit_message", text: reply });
+        success = true;
     } catch (error) {
         if (signal.aborted) {
             send({ type: "orbit_message", text: "Turno cancelado." });
@@ -149,7 +151,7 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
             send({ type: "orbit_message", text: "Orbit no pudo terminar el turno. Revisa el proveedor y el registro local." });
         }
     } finally {
-        send({ type: "turn_complete" });
+        send({ type: "turn_complete", success });
         send({ type: "typing", state: "idle" });
     }
 }

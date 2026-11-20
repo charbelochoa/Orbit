@@ -51,9 +51,12 @@ async function runClientTurn(
     client: Client,
     conversationId: unknown,
     handle: (context: TurnContext) => Promise<void>,
+    requestId?: unknown,
 ) {
     const send = (message: Record<string, unknown>) => {
-        if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(message));
+        if (client.ws.readyState !== WebSocket.OPEN) return;
+        const id = typeof requestId === "string" && /^[\w-]{1,100}$/.test(requestId) ? requestId : undefined;
+        client.ws.send(JSON.stringify(id ? { ...message, requestId: id } : message));
     };
     if (client.turn) {
         send({ type: "error", message: "Ya hay un turno en curso." });
@@ -278,7 +281,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 break;
             }
             const provider = typeof payload?.provider === "string" ? payload.provider : undefined;
-            await runClientTurn(client, payload?.conversationId, context => chat({ ...context, text, provider }));
+            await runClientTurn(client, payload?.conversationId, context => chat({ ...context, text, provider }), payload?.requestId);
             break;
         }
 
