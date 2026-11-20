@@ -22,6 +22,7 @@ interface TaskJournal {
 }
 
 const MAX_ATTEMPTS = 3;
+const RETRYABLE_READS = new Set(["glob_search", "grep_search", "todo_read", "web_fetch", "web_search", "weather_report"]);
 
 export class AgentExecutor {
     private readonly controller = new AbortController();
@@ -161,7 +162,7 @@ export class AgentExecutor {
         const parameters = this.applyOutputs(step.parameters, outputs);
         const tool = toolRegistry.get(step.tool);
         const canRetry = tool && !tool.capabilities.destructive && !tool.capabilities.requiresUI &&
-            (tool.section === "web" || ["glob_search", "grep_search", "todo_read"].includes(tool.id));
+            RETRYABLE_READS.has(tool.id);
         let dispatched = false;
         let retryFailure: StepResult | undefined;
         while (budget.consume()) {
