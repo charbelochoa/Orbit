@@ -13,7 +13,7 @@ export type MouseButton = "left" | "right" | "double";
 type DesktopCommand =
     | { op: "position" | "screen" }
     | { op: "move" | "drag"; points: number[]; delay: number }
-    | { op: "click"; button: MouseButton }
+    | { op: "click"; button: Exclude<MouseButton, "double"> }
     | { op: "keys"; modifiers: number[]; key: number; extended: boolean }
     | { op: "scroll"; amount: number; horizontal: boolean }
     | { op: "type"; text: string }
@@ -203,7 +203,11 @@ export function movePointer(to: DesktopPoint, button?: MouseButton, signal?: Abo
     return inDesktop(signal, async send => {
         const from = readPoint(await send({ op: "position" }));
         await send({ op: "move", ...pointerPath(from, to) });
-        if (button) await send({ op: "click", button });
+        if (button) await send({ op: "click", button: button === "double" ? "left" : button });
+        if (button === "double") {
+            await delay(80, undefined, { signal });
+            await send({ op: "click", button: "left" });
+        }
     });
 }
 

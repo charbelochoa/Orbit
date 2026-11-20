@@ -86,13 +86,7 @@ while ($null -ne ($line = [Console]::ReadLine())) {
                 $value = @($bounds.Width, $bounds.Height)
             }
             'move' { [OrbitInput]::Move([int[]]$request.points, [int]$request.delay) }
-            'click' {
-                [OrbitInput]::Click($request.button -eq 'right')
-                if ($request.button -eq 'double') {
-                    Start-Sleep -Milliseconds 80
-                    [OrbitInput]::Click($false)
-                }
-            }
+            'click' { [OrbitInput]::Click($request.button -eq 'right') }
             'drag' { [OrbitInput]::Drag([int[]]$request.points, [int]$request.delay) }
             'scroll' { [OrbitInput]::Scroll([int]$request.amount, [bool]$request.horizontal) }
             'keys' { [OrbitInput]::Keys([byte[]]$request.modifiers, [byte]$request.key, [bool]$request.extended) }
