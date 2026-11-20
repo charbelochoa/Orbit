@@ -91,9 +91,10 @@ export class AgentExecutor {
                 if (step.dependsOn.some(id => !results.get(id)?.success)) {
                     result = this.failure(step, "Un paso previo no terminó correctamente.");
                 } else {
-                    saveStep(step.step, { state: "running" });
-                    broadcast({ type: "task_step_started", taskId, step: step.step });
-                    result = await this.runStep(step, outputs, goal, onProgress);
+                    result = await this.runStep(step, outputs, goal, () => {
+                        saveStep(step.step, { state: "running" });
+                        broadcast({ type: "task_step_started", taskId, step: step.step });
+                    }, onProgress);
                 }
                 saveStep(step.step, { state: "settled", success: result.success, output: result.output, abort: result.abort });
                 if (result.success) {
@@ -143,6 +144,7 @@ export class AgentExecutor {
         step: PlanStep,
         outputs: Map<string, string>,
         goal: string,
+        onDispatch: () => void,
         onProgress?: (message: string) => void,
     ): Promise<StepResult> {
         const signal = this.controller.signal;
@@ -152,15 +154,23 @@ export class AgentExecutor {
         const tool = toolRegistry.get(step.tool);
         const canRetry = tool && !tool.capabilities.destructive && !tool.capabilities.requiresUI &&
             (tool.section === "web" || ["glob_search", "grep_search", "todo_read"].includes(tool.id));
+        let dispatched = false;
         while (budget.consume()) {
             signal.throwIfAborted();
             try {
-                const output = await runInLane(taskId, () => executeTool(step.tool, parameters, signal), signal, step.tool);
+                const output = await runInLane(taskId, () => {
+                    if (!dispatched) {
+                        onDispatch();
+                        dispatched = true;
+                    }
+                    return executeTool(step.tool, parameters, signal);
+                }, signal, step.tool);
                 const failure = getToolFailure(output);
                 if (failure) throw failure;
                 return { stepId: step.step, tool: step.tool, success: true, output };
             } catch (error) {
                 signal.throwIfAborted();
+                if (!dispatched) throw error;
                 const message = error instanceof Error ? error.message : String(error);
                 const denied = error instanceof OrbitToolError && error.code === "PERMISSION_DENIED";
                 if (canRetry && !denied && budget.remaining > 0) {
