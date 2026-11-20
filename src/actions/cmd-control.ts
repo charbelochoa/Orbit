@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import os from "os";
 import { EventEmitter } from "events";
 import { normalizePath, getShellCommand, isElevated } from "../core/path-utils.js";
 import { workspaceRoot } from "../core/workspace.js";
 import { boundToolResult } from "../context/text-budget.js";
 import { OrbitToolError } from "../core/orbit-error.js";
+import { ProcessTimeoutError, waitForProcess } from "../infra/process-lifetime.js";
 
 // ── Background process tracker ───────────────────────────────
 export const cmdEvents = new EventEmitter();
@@ -93,27 +93,19 @@ export async function cmdControl(p: CmdControlParams, signal?: AbortSignal): Pro
         ? spawn(command, { ...options, shell: true })
         : spawn(getShellCommand(), process.platform === "win32" ? ["-NoProfile", "-NonInteractive", "-Command", task] : ["-c", task], options);
     const handle = observeProcess(child, redactCmd(text).slice(0, 100), Boolean(p.run_in_background));
-    if (p.run_in_background) return handle.started;
-
-    let timeoutReached = false;
-    const threshold = setTimeout(() => {
-        timeoutReached = true;
-        stopProcess(child);
-    }, timeout);
-    const abort = () => stopProcess(child);
-    signal?.addEventListener("abort", abort, { once: true });
     try {
-        const result = await handle.finished;
-        signal?.throwIfAborted();
-        if (timeoutReached) throw new OrbitToolError("cmd_control", "TIMEOUT", "Se agotó el tiempo del comando.");
+        if (p.run_in_background) return await waitForProcess(child, handle.started, timeout, signal);
+        const result = await waitForProcess(child, handle.finished, timeout, signal);
         const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
         if (result.code !== 0) {
             throw new OrbitToolError("cmd_control", "TOOL_FAILED", output || "El comando terminó con código " + result.code + ".");
         }
         return output || "Comando completado.";
-    } finally {
-        clearTimeout(threshold);
-        signal?.removeEventListener("abort", abort);
+    } catch (error) {
+        if (error instanceof ProcessTimeoutError) {
+            throw new OrbitToolError("cmd_control", "TIMEOUT", "Se agotó el tiempo del comando.");
+        }
+        throw error;
     }
 }
 
@@ -154,17 +146,4 @@ function observeProcess(child: ChildProcess, label: string, background: boolean)
     });
     void finished.catch(() => {});
     return { started, finished };
-}
-
-function stopProcess(child: ChildProcess): void {
-    if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
-    if (process.platform !== "win32") {
-        child.kill("SIGTERM");
-        return;
-    }
-    const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    killer.once("error", () => child.kill());
-    killer.once("close", code => {
-        if (code !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
-    });
 }
