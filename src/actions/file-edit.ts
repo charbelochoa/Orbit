@@ -4,7 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { resolveFilePath, writeFileAtomically } from "../core/file-access.js";
+import { resolveFilePath, withFileMutation, writeFileAtomically } from "../core/file-access.js";
 
 export interface FileEditParams {
     file_path:    string;
@@ -20,7 +20,10 @@ export async function fileEdit(parameters: any): Promise<string> {
     if (typeof p.new_string !== "string") return "Se necesita 'new_string'.";
 
     const filePath = await resolveFilePath(p.file_path);
+    return withFileMutation([filePath], () => editFile(filePath, p));
+}
 
+async function editFile(filePath: string, p: FileEditParams): Promise<string> {
     if (!fs.existsSync(filePath)) {
         return `Archivo no encontrado: ${filePath}`;
     }

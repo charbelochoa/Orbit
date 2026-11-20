@@ -5,6 +5,15 @@ import path from "node:path";
 import { getConfig } from "../config/config.js";
 import { normalizePath } from "./path-utils.js";
 import { isWithin, workspaceRoot } from "./workspace.js";
+import { KeyedAsyncQueue } from "../infra/keyed-async-queue.js";
+
+const fileMutations = new KeyedAsyncQueue();
+
+export async function withFileMutation<T>(paths: string[], work: () => Promise<T>): Promise<T> {
+    const locks = await Promise.all(paths.map(resolveExistingAncestor));
+    const keys = process.platform === "win32" ? locks.map(filename => filename.toLowerCase()) : locks;
+    return fileMutations.enqueue(keys, work);
+}
 
 export async function resolveFilePath(input: string): Promise<string> {
     const target = normalizePath(input);

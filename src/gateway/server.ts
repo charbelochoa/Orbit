@@ -9,6 +9,7 @@ import { browserControl } from "../actions/browser-control.js";
 import { clearHistory } from "../memory/chat-history.js";
 import { providerRegistry } from "../providers/registry.js";
 import { resolveWorkspace, withWorkspace, workspaceRoot } from "../core/workspace.js";
+import { KeyedAsyncQueue } from "../infra/keyed-async-queue.js";
 
 // ── Session auth token (generated per process lifetime) ──────────────
 const SESSION_TOKEN = crypto.randomBytes(32).toString("hex");
@@ -39,6 +40,7 @@ type TurnContext = Pick<ChatTurn, "sessionId" | "signal" | "send">;
 export type VoiceTurn = TurnContext & { data: string };
 type ChatHandler = (turn: ChatTurn) => Promise<void>;
 type VoiceHandler = (turn: VoiceTurn) => Promise<void>;
+const sessionTurns = new KeyedAsyncQueue();
 
 async function runClientTurn(
     client: Client,
@@ -53,8 +55,13 @@ async function runClientTurn(
         return;
     }
     client.turn = new AbortController();
+    const { signal } = client.turn;
+    const sessionId = sessionKey(client, conversationId);
     try {
-        await handle({ sessionId: sessionKey(client, conversationId), signal: client.turn.signal, send });
+        await sessionTurns.enqueue(sessionId, () => handle({ sessionId, signal, send }), signal);
+    } catch (error) {
+        if (!signal.aborted) throw error;
+        send({ type: "turn_complete" });
     } finally {
         client.turn = undefined;
     }
@@ -333,7 +340,10 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
 
         case "history_delete": {
             const id = payload?.conversationId;
-            if (typeof id === "string" && /^conv_[\w-]{1,95}$/.test(id)) clearHistory(`chat:${id}`);
+            if (typeof id === "string" && /^conv_[\w-]{1,95}$/.test(id)) {
+                const sessionId = `chat:${id}`;
+                await sessionTurns.enqueue(sessionId, async () => { clearHistory(sessionId); });
+            }
             break;
         }
 

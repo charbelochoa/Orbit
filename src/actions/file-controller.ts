@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { resolveFilePath, writeFileAtomically } from "../core/file-access.js";
+import { resolveFilePath, withFileMutation, writeFileAtomically } from "../core/file-access.js";
 import { workspaceRoot } from "../core/workspace.js";
 
 const shortcuts: Record<string, string> = {
@@ -14,7 +14,8 @@ const shortcuts: Record<string, string> = {
 export async function fileController(parameters: Record<string, unknown>): Promise<string> {
     const action = typeof parameters?.action === "string" ? parameters.action.trim().toLowerCase() : "";
     const requested = typeof parameters?.path === "string" ? parameters.path : "";
-    const target = await resolveFilePath(shortcuts[requested.toLowerCase()] ?? (requested || workspaceRoot()));
+    const shortcut = requested.toLowerCase();
+    const target = await resolveFilePath(Object.hasOwn(shortcuts, shortcut) ? shortcuts[shortcut] : requested || workspaceRoot());
 
     switch (action) {
         case "list": {
@@ -44,16 +45,18 @@ export async function fileController(parameters: Record<string, unknown>): Promi
                 ? await resolveFilePath(path.resolve(target, name))
                 : target;
             const content = typeof parameters.content === "string" ? parameters.content : "";
-            await writeFileAtomically(destination, content);
+            await withFileMutation([destination], () => writeFileAtomically(destination, content));
             return `Archivo guardado en ${destination}.`;
         }
         case "delete": {
             if (!requested || Object.hasOwn(shortcuts, requested.toLowerCase()) || target === workspaceRoot()) {
                 throw new Error("Indica un archivo o subcarpeta para eliminar.");
             }
-            const info = await fs.lstat(target);
-            if (info.isDirectory()) await fs.rm(target, { recursive: true });
-            else await fs.unlink(target);
+            await withFileMutation([target], async () => {
+                const info = await fs.lstat(target);
+                if (info.isDirectory()) await fs.rm(target, { recursive: true });
+                else await fs.unlink(target);
+            });
             return `Eliminado: ${target}`;
         }
         case "move":
@@ -62,8 +65,10 @@ export async function fileController(parameters: Record<string, unknown>): Promi
                 throw new Error("Indica el destino.");
             }
             const destination = await resolveFilePath(parameters.destination);
-            if (action === "move") await fs.rename(target, destination);
-            else await fs.cp(target, destination, { recursive: true });
+            await withFileMutation([target, destination], async () => {
+                if (action === "move") await fs.rename(target, destination);
+                else await fs.cp(target, destination, { recursive: true });
+            });
             return `${action === "move" ? "Movido" : "Copiado"} a ${destination}.`;
         }
         case "find": {
