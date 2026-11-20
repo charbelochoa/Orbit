@@ -12,6 +12,7 @@ import { getConfig } from "../config/config.js";
 import { toolRegistry } from "../core/registry.js";
 import { clearHistory } from "../memory/chat-history.js";
 import { providerRegistry } from "../providers/registry.js";
+import { withProviderSelection } from "../providers/selection.js";
 import { resolveWorkspace, withWorkspace, workspaceRoot } from "../core/workspace.js";
 import { KeyedAsyncQueue } from "../infra/keyed-async-queue.js";
 
@@ -41,7 +42,6 @@ export interface ChatTurn {
     text: string;
     sessionId: string;
     signal: AbortSignal;
-    provider?: string;
     send: (message: Record<string, unknown>) => void;
 }
 
@@ -224,7 +224,10 @@ export async function startGateway(
                     ws.send(JSON.stringify({ type: "error", message: (error as Error).message }));
                     return;
                 }
-                await withWorkspace(workspace, () => handleClientMessage(id, msg, speakFn, chat, voice));
+                const selection = ["chat", "task", "batch"].includes(msg.type)
+                    ? providerRegistry.resolveRequestSelection(msg.payload?.provider, msg.payload?.model)
+                    : undefined;
+                await withWorkspace(workspace, () => withProviderSelection(selection, () => handleClientMessage(id, msg, speakFn, chat, voice)));
             } catch (e: any) {
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: "error", message: e instanceof SyntaxError ? "Mensaje JSON inválido." : e.message }));
@@ -293,8 +296,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 });
                 break;
             }
-            const provider = typeof payload?.provider === "string" ? payload.provider : undefined;
-            await runClientTurn(client, payload?.conversationId, context => chat({ ...context, text, provider }), payload?.requestId);
+            await runClientTurn(client, payload?.conversationId, context => chat({ ...context, text }), payload?.requestId);
             break;
         }
 

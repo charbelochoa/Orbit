@@ -13,6 +13,7 @@ import { OllamaProvider } from "./ollama.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
 import { jitteredBackoff, ProviderHttpError } from "./retry.js";
 import { isToolProtocolRejection } from "./tool-adapter.js";
+import { currentProviderSelection, type ProviderSelection } from "./selection.js";
 
 const log = createLogger("Providers");
 
@@ -87,10 +88,10 @@ class ProviderRegistryClass {
         return selection.provider;
     }
 
-    private selectionChain(providerId?: string) {
+    private selectionChain(providerId?: string, allowFallback = !providerId) {
         const config = getConfig();
         const primary = { provider: providerId || this._activeProviderId || config.defaultProvider, model: "" };
-        if (providerId) return [primary];
+        if (!allowFallback) return [primary];
         return [
             primary,
             ...config.fallbackChain,
@@ -106,24 +107,45 @@ class ProviderRegistryClass {
         return undefined;
     }
 
+    resolveRequestSelection(providerId: unknown, model: unknown): ProviderSelection | undefined {
+        if (providerId === undefined && model === undefined) return undefined;
+        const id = typeof providerId === "string" ? providerId.trim().toLowerCase() : "";
+        const provider = this.providers.get(id);
+        if (!provider) throw new Error("Selecciona un proveedor válido para esta solicitud.");
+        if (model !== undefined && (typeof model !== "string" || !model.trim() || model.length > 160 || /[\u0000-\u001f\u007f]/.test(model))) {
+            throw new Error("Indica un identificador de modelo válido de hasta 160 caracteres.");
+        }
+        return { providerId: id, model: typeof model === "string" ? model.trim() : provider.defaultTextModel(), allowFallback: false };
+    }
+
+    captureSelection(): ProviderSelection | undefined {
+        const scoped = currentProviderSelection();
+        if (scoped) return scoped;
+        const selection = this.getConfiguredSelection();
+        if (!selection) return undefined;
+        const { provider, model } = selection;
+        return { providerId: provider.id, model: model || provider.defaultTextModel(), allowFallback: true };
+    }
+
     /**
      * Generate text with automatic fallback.
      * Phase 8.2: rate-limit detection, cooldown, health tracking.
      */
     async generateText(params: TextGenerationParams, providerId?: string): Promise<TextGenerationResult> {
-        const chain = this.selectionChain(providerId);
-        const primary = chain[0].provider;
+        const scoped = providerId ? undefined : currentProviderSelection();
+        const chain = this.selectionChain(providerId || scoped?.providerId, scoped?.allowFallback);
         const attempted = new Set<string>();
 
         let lastError: Error | null = null;
         let toolProtocolError: Error | undefined;
 
-        for (const link of chain) {
+        for (const [index, link] of chain.entries()) {
             params.signal?.throwIfAborted();
             const provider = this.providers.get(link.provider);
             if (!provider?.isAvailable()) continue;
-            const effectiveModel = (link.provider === primary ? params.model : undefined) || link.model || undefined;
-            const candidate = `${link.provider}:${effectiveModel ?? ""}`;
+            const preferredModel = index === 0 ? params.model || scoped?.model : undefined;
+            const effectiveModel = preferredModel || link.model || provider.defaultTextModel();
+            const candidate = `${link.provider}:${effectiveModel}`;
             if (attempted.has(candidate)) continue;
             attempted.add(candidate);
 

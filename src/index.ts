@@ -107,7 +107,7 @@ function announce(text: string) {
     broadcast({ type: "orbit_message", text });
 }
 
-async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
+async function chat({ text, sessionId, send, signal }: ChatTurn) {
     send({ type: "typing", state: "thinking" });
     let success = false;
     try {
@@ -128,7 +128,7 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
             tools: policyEngine.filterTools(toolRegistry.getByProfile(getConfig().toolProfile)),
             maxIterations: getConfig().agent.maxChatSteps,
             signal: deadline,
-            generate: params => providerRegistry.generateText(params, provider),
+            generate: params => providerRegistry.generateText(params),
             execute: (name, args) => runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name),
             onTool: (name, result, failed) => {
                 if (result === undefined) {
