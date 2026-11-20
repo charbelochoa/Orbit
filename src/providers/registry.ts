@@ -82,21 +82,28 @@ class ProviderRegistryClass {
     }
 
     getDefault(): LLMProvider {
-        // Respect runtime override first (Phase 7)
-        if (this._activeProviderId) {
-            const p = this.providers.get(this._activeProviderId);
-            if (p?.isAvailable()) return p;
-        }
-        const config = getConfig();
-        const provider = this.providers.get(config.defaultProvider);
-        if (provider?.isAvailable()) return provider;
+        const selection = this.getConfiguredSelection();
+        if (!selection) throw new Error("No LLM providers available. Configure at least one API key.");
+        return selection.provider;
+    }
 
-        const available = this.getAvailable();
-        if (available.length === 0) {
-            throw new Error("No LLM providers available. Configure at least one API key.");
+    private selectionChain(providerId?: string) {
+        const config = getConfig();
+        const primary = { provider: providerId || this._activeProviderId || config.defaultProvider, model: "" };
+        if (providerId) return [primary];
+        return [
+            primary,
+            ...config.fallbackChain,
+            ...this.getAvailable().map(provider => ({ provider: provider.id, model: "" })),
+        ];
+    }
+
+    private getConfiguredSelection() {
+        for (const entry of this.selectionChain()) {
+            const provider = this.providers.get(entry.provider);
+            if (provider?.isAvailable()) return { provider, model: entry.model };
         }
-        log.warn(`Default provider '${config.defaultProvider}' not available. Using '${available[0].id}'.`);
-        return available[0];
+        return undefined;
     }
 
     /**
@@ -104,13 +111,8 @@ class ProviderRegistryClass {
      * Phase 8.2: rate-limit detection, cooldown, health tracking.
      */
     async generateText(params: TextGenerationParams, providerId?: string): Promise<TextGenerationResult> {
-        const config = getConfig();
-        const primary = providerId || this._activeProviderId || config.defaultProvider;
-        const chain = providerId ? [{ provider: primary, model: "" }] : [
-            { provider: primary, model: "" },
-            ...config.fallbackChain,
-            ...this.getAvailable().map(provider => ({ provider: provider.id, model: "" })),
-        ];
+        const chain = this.selectionChain(providerId);
+        const primary = chain[0].provider;
         const attempted = new Set<string>();
 
         let lastError: Error | null = null;
@@ -259,11 +261,13 @@ class ProviderRegistryClass {
 
     /** Returns { id, name, models } for the currently active provider. */
     getActiveInfo(): { id: string; name: string; models: string[] } {
-        const p = this._activeProviderId
-            ? this.providers.get(this._activeProviderId)
-            : this.getAvailable()[0];
-        if (!p) return { id: "none", name: "none", models: [] };
-        return { id: p.id, name: p.name, models: p.listModels() };
+        const selection = this.getConfiguredSelection();
+        if (!selection) return { id: "none", name: "none", models: [] };
+        const { provider, model } = selection;
+        const config = Object.entries(getConfig().providers).find(([id]) => id === provider.id)?.[1];
+        const configured = Object.values(config?.models ?? {});
+        const models = [...new Set([model, ...configured, ...provider.listModels()].filter(Boolean))];
+        return { id: provider.id, name: provider.name, models };
     }
 }
 
