@@ -4,7 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { normalizePath } from "../core/path-utils.js";
+import { resolveFilePath, writeFileAtomically } from "../core/file-access.js";
 
 export interface FileEditParams {
     file_path:    string;
@@ -16,10 +16,10 @@ export interface FileEditParams {
 export async function fileEdit(parameters: any): Promise<string> {
     const p = parameters as FileEditParams;
     if (!p?.file_path) return "Se necesita 'file_path'.";
-    if (typeof p.old_string !== "string") return "Se necesita 'old_string'.";
+    if (typeof p.old_string !== "string" || !p.old_string.length) return "Error: se necesita 'old_string' con contenido.";
     if (typeof p.new_string !== "string") return "Se necesita 'new_string'.";
 
-    const filePath = normalizePath(p.file_path);
+    const filePath = await resolveFilePath(p.file_path);
 
     if (!fs.existsSync(filePath)) {
         return `Archivo no encontrado: ${filePath}`;
@@ -47,9 +47,9 @@ export async function fileEdit(parameters: any): Promise<string> {
     // Apply replacement
     const updated = p.replace_all
         ? original.split(p.old_string).join(p.new_string)
-        : original.replace(p.old_string, p.new_string);
+        : original.replace(p.old_string, () => p.new_string);
 
-    fs.writeFileSync(filePath, updated, "utf-8");
+    await writeFileAtomically(filePath, updated);
 
     // Generate a short diff summary
     const replacements = p.replace_all ? occurrences : 1;

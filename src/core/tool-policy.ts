@@ -262,7 +262,7 @@ class ToolPolicyEngine {
         return [
             ...this.layers,
             { name: "project", priority: 60, rules: project },
-            { name: "local", priority: 65, rules: local },
+            { name: "local", priority: 40, rules: local },
         ].sort((left, right) => right.priority - left.priority);
     }
 
@@ -279,6 +279,12 @@ class ToolPolicyEngine {
 
 export const policyEngine = new ToolPolicyEngine();
 
+policyEngine.addLayer({
+    name: "policy",
+    priority: 100,
+    rules: [{ toolId: "cmd_control", action: "ask", reason: "Ejecución de comando del sistema" }],
+});
+
 // Layer 1: Hardcoded system policy (highest priority)
 // Layer 5: Session (starts empty, rules added at runtime)
 policyEngine.addLayer({
@@ -291,7 +297,7 @@ policyEngine.addLayer({
 policyEngine.addLayer({
     name: "default",
     priority: 0,
-    rules: [{ toolId: "cmd_control", action: "ask", reason: "Ejecución de comando del sistema" }],
+    rules: [],
 });
 
 // Load file-based layers on startup
