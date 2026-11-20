@@ -5,15 +5,27 @@ import {
 import { getConfig } from "../config/config.js";
 import { IterationBudget } from "../agent/iteration-budget.js";
 import { boundToolResult } from "../context/text-budget.js";
+import { raceWithAbortSignal } from "../infra/race-abort.js";
 
 interface VoiceOptions {
-    data: string;
+    data: string | AsyncIterable<string>;
     systemPrompt: string;
     tools: FunctionDeclaration[];
     signal: AbortSignal;
     onAudio: (data: string, sampleRate: number) => void;
     onUsage: (input: number, output: number) => void;
     execute: (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<string>;
+}
+
+async function* voicePackets(data: VoiceOptions["data"]): AsyncGenerator<string> {
+    if (typeof data !== "string") {
+        yield* data;
+        return;
+    }
+    const pcm = Buffer.from(data, "base64");
+    for (let offset = 0; offset < pcm.length; offset += 6400) {
+        yield pcm.subarray(offset, offset + 6400).toString("base64");
+    }
 }
 
 export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: string; assistant: string }> {
@@ -29,14 +41,18 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
     const allowed = new Set(options.tools.map(tool => tool.name));
     let session: Session | undefined;
     let finished = false;
+    let inputFinished = false;
     let pendingMessages = Promise.resolve();
     const cancelledCalls = new Set<string>();
     const activeCalls = new Map<string, AbortController>();
+    const handledCalls = new Set<string>();
     let user = "";
     let assistant = "";
     let resolveTurn: () => void;
     let rejectTurn: (reason: unknown) => void;
     const turn = new Promise<void>((resolve, reject) => { resolveTurn = resolve; rejectTurn = reject; });
+    let markReady: () => void;
+    const ready = new Promise<void>(resolve => { markReady = resolve; });
     const abort = () => rejectTurn(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
 
@@ -63,7 +79,9 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
             const responses: FunctionResponse[] = [];
             for (const call of calls) {
                 signal.throwIfAborted();
-                if (call.id && cancelledCalls.has(call.id)) continue;
+                if (!call.id) throw new Error("Gemini Live envió una llamada a herramienta sin identificador.");
+                if (cancelledCalls.has(call.id) || handledCalls.has(call.id)) continue;
+                handledCalls.add(call.id);
                 const name = call.name ?? "";
                 if (!allowed.has(name) || !budget.consume()) {
                     const result = allowed.has(name) ? "Se agotó el presupuesto de acciones." : "Herramienta no disponible.";
@@ -89,7 +107,7 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
             const pending = responses.filter(response => !response.id || !cancelledCalls.has(response.id));
             if (pending.length) session?.sendToolResponse({ functionResponses: pending });
         }
-        if (content?.turnComplete) resolveTurn();
+        if (content?.turnComplete && inputFinished) resolveTurn();
     };
 
     const connect = ai.live.connect({
@@ -106,6 +124,7 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
         },
         callbacks: {
             onmessage: message => {
+                if (message.setupComplete) markReady();
                 for (const id of message.toolCallCancellation?.ids ?? []) {
                     cancelledCalls.add(id);
                     activeCalls.get(id)?.abort();
@@ -116,15 +135,26 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
             onerror: () => rejectTurn(new Error("Gemini Live no pudo continuar la sesión de voz.")),
             onclose: () => rejectTurn(new Error("Gemini Live cerró la sesión de voz.")),
         },
-    }).then(connection => {
+    }).then(async connection => {
         if (finished || signal.aborted) {
             connection.close();
             throw signal.reason ?? new Error("La sesión de voz terminó.");
         }
         session = connection;
-        session.sendRealtimeInput({ activityStart: {} });
-        session.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: options.data } });
-        session.sendRealtimeInput({ activityEnd: {} });
+        await raceWithAbortSignal(ready, signal);
+        let started = false;
+        for await (const data of voicePackets(options.data)) {
+            signal.throwIfAborted();
+            if (!started) {
+                connection.sendRealtimeInput({ activityStart: {} });
+                started = true;
+            }
+            connection.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data } });
+        }
+        signal.throwIfAborted();
+        if (!started) throw new Error("Orbit no recibió muestras del micrófono.");
+        inputFinished = true;
+        connection.sendRealtimeInput({ activityEnd: {} });
         return turn;
     });
 
