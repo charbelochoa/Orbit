@@ -1,3 +1,4 @@
+import { workspaceRoot } from "../core/workspace.js";
 /**
  * Orbit Hooks — Runner
  * Phase 6: Executes hook commands with interpolated context variables.
@@ -45,7 +46,7 @@ export async function runHooks(event: HookEvent, context: Partial<HookContext> =
 
     const ctx: HookContext = {
         event,
-        cwd: process.cwd(),
+        cwd: workspaceRoot(),
         ...context,
     };
 

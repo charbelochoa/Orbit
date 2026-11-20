@@ -1,3 +1,4 @@
+import { workspaceRoot } from "../../core/workspace.js";
 /**
  * /todos — Gestión de tareas inline
  *
@@ -19,7 +20,7 @@ interface TodoItem {
 }
 
 function getTodosPath(): string {
-    const dir = path.join(process.cwd(), ".orbit");
+    const dir = path.join(workspaceRoot(), ".orbit");
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     return path.join(dir, "todos.json");
 }

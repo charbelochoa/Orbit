@@ -5,6 +5,7 @@
 import { execSync, execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { isWithin, workspaceRoot } from "../core/workspace.js";
 
 export interface GrepParams {
     pattern:     string;
@@ -35,12 +36,13 @@ export async function grepTool(parameters: any): Promise<string> {
     const p = parameters as GrepParams;
     if (!p?.pattern) return "Se necesita un 'pattern' para buscar.";
 
-    const dir = path.resolve(p.dir || process.cwd());
+    const projectRoot = fs.realpathSync(workspaceRoot());
+    const resolved = path.resolve(projectRoot, p.dir || ".");
+    const dir = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
     if (!fs.existsSync(dir)) return `Directorio no encontrado: ${dir}`;
 
     // Security: restrict search to the project root
-    const projectRoot = path.resolve(process.cwd());
-    if (!dir.startsWith(projectRoot + path.sep) && dir !== projectRoot) {
+    if (!isWithin(projectRoot, dir)) {
         return `Búsqueda bloqueada: '${dir}' está fuera del directorio del proyecto.`;
     }
 

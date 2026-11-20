@@ -8,6 +8,7 @@ import { loopRegistry } from "../agent/loop-registry.js";
 import { browserControl } from "../actions/browser-control.js";
 import { clearHistory } from "../memory/chat-history.js";
 import { providerRegistry } from "../providers/registry.js";
+import { resolveWorkspace, withWorkspace, workspaceRoot } from "../core/workspace.js";
 
 // ── Session auth token (generated per process lifetime) ──────────────
 const SESSION_TOKEN = crypto.randomBytes(32).toString("hex");
@@ -202,7 +203,14 @@ export async function startGateway(
                     return;
                 }
 
-                await handleClientMessage(id, msg, speakFn, chat, voice);
+                let workspace: string;
+                try {
+                    workspace = await resolveWorkspace(msg.payload?.workspace);
+                } catch (error) {
+                    ws.send(JSON.stringify({ type: "error", message: (error as Error).message }));
+                    return;
+                }
+                await withWorkspace(workspace, () => handleClientMessage(id, msg, speakFn, chat, voice));
             } catch (e: any) {
                 ws.send(JSON.stringify({ type: "error", message: `JSON invalido: ${e.message}` }));
             }
@@ -303,6 +311,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 type: "status",
                 provider: provider.name,
                 providerId: provider.id,
+                workspace: workspaceRoot(),
                 gemini: providerRegistry.get("gemini")?.isAvailable() ?? false,
                 python: process.env.ORBIT_VISION_ENGINE === "1",
                 tasks: tasks.map(t => ({

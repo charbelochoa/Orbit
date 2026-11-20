@@ -1,6 +1,7 @@
 import { AgentExecutor } from "./executor.js";
 import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
+import { withWorkspace, workspaceRoot } from "../core/workspace.js";
 
 const log = createLogger("TaskQueue");
 
@@ -30,6 +31,7 @@ function compareQueueEntries(left: QueueEntry, right: QueueEntry): number {
 export interface Task {
     id: string;
     goal: string;
+    workspace: string;
     priority: TaskPriority;
     status: "pending" | "running" | "paused" | "done" | "failed" | "cancelled";
     createdAt: Date;
@@ -64,7 +66,7 @@ class TaskQueue {
         }
         const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const task: Task = {
-            id, goal, priority,
+            id, goal, priority, workspace: workspaceRoot(),
             status: "pending",
             createdAt: new Date(),
             output: [],
@@ -101,7 +103,7 @@ class TaskQueue {
             if (task.speak) task.speak(`Comenzando tarea: ${task.goal.slice(0, 50)}...`);
 
             // Run async — don't block the loop
-            this._run(task).finally(() => {
+            withWorkspace(task.workspace, () => this._run(task)).finally(() => {
                 this.runningCount--;
                 this.processNext();
             });

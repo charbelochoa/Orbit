@@ -1,3 +1,4 @@
+import { workspaceRoot } from "../../core/workspace.js";
 /**
  * /permissions — Sprint 8: gestión interactiva de permisos por herramienta.
  *
@@ -24,7 +25,7 @@ export async function permissionsCommand(ctx: CommandContext): Promise<string> {
         /* ── show ─────────────────────────────────────────────────────── */
         case "show":
         case undefined: {
-            const filePath = path.join(process.cwd(), ".orbit", "settings.local.json");
+            const filePath = path.join(workspaceRoot(), ".orbit", "settings.local.json");
             if (!fs.existsSync(filePath)) {
                 return "No hay reglas locales. Archivo `.orbit/settings.local.json` no existe.";
             }

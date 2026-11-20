@@ -4,6 +4,7 @@
  */
 import fs from "fs";
 import path from "path";
+import { isWithin, workspaceRoot } from "../core/workspace.js";
 
 export interface GlobParams {
     pattern: string;
@@ -23,12 +24,13 @@ export async function globTool(parameters: any): Promise<string> {
     const p = parameters as GlobParams;
     if (!p?.pattern) return "Se necesita un 'pattern' (ej. '**/*.ts', 'src/**/*.json').";
 
-    const baseDir = path.resolve(p.dir || process.cwd());
+    const projectRoot = fs.realpathSync(workspaceRoot());
+    const resolved = path.resolve(projectRoot, p.dir || ".");
+    const baseDir = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
     if (!fs.existsSync(baseDir)) return `Directorio no encontrado: ${baseDir}`;
 
     // Security: restrict traversal to the project root
-    const projectRoot = path.resolve(process.cwd());
-    if (!baseDir.startsWith(projectRoot + path.sep) && baseDir !== projectRoot) {
+    if (!isWithin(projectRoot, baseDir)) {
         return `Búsqueda bloqueada: '${baseDir}' está fuera del directorio del proyecto.`;
     }
 

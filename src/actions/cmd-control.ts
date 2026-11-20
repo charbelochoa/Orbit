@@ -3,6 +3,7 @@ import { promisify } from "util";
 import os from "os";
 import { EventEmitter } from "events";
 import { normalizePath, getShellCommand, isElevated } from "../core/path-utils.js";
+import { workspaceRoot } from "../core/workspace.js";
 
 const execAsync = promisify(exec);
 
@@ -86,7 +87,7 @@ export async function cmdControl(parameters: any): Promise<string> {
         return "Comando bloqueado: operación potencialmente peligrosa no permitida.";
     }
 
-    const cwd = normalizePath(p?.cwd || process.cwd());
+    const cwd = normalizePath(p?.cwd || workspaceRoot());
     const timeoutMs = Math.min(Math.max(p?.timeout_ms || 30000, 1000), 120000);
     const shell = getShellCommand();
     const cmdToRun = command || `${shell} -NoProfile -Command "${task}"`;

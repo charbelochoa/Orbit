@@ -13,6 +13,7 @@
 
 import fs from "fs";
 import path from "path";
+import { workspaceRoot } from "./workspace.js";
 import os from "os";
 import { createLogger } from "../infra/logger.js";
 import type { OrbitTool } from "./registry.js";
@@ -58,7 +59,7 @@ export function isProtectedPath(filePath: string): string | null {
     const normalized = filePath.replace(/\\/g, "/");
     const basename = path.basename(normalized);
     const relative = path.isAbsolute(normalized)
-        ? path.relative(process.cwd(), normalized).replace(/\\/g, "/")
+        ? path.relative(workspaceRoot(), normalized).replace(/\\/g, "/")
         : normalized;
 
     // Check exact protected files
@@ -178,7 +179,7 @@ class ToolPolicyEngine {
 
     /** Remove all local rules for a toolId (clear) */
     removeLocalRule(toolId: string): void {
-        const dir      = path.join(process.cwd(), ".orbit");
+        const dir      = path.join(workspaceRoot(), ".orbit");
         const filePath = path.join(dir, "settings.local.json");
         if (!fs.existsSync(filePath)) return;
         let settings: SettingsFile = {};
@@ -187,12 +188,11 @@ class ToolPolicyEngine {
         settings.deny  = (settings.deny  || []).filter(id => id !== toolId);
         settings.ask   = (settings.ask   || []).filter(id => id !== toolId);
         fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
-        this.loadConfigLayers();
     }
 
     /** Save a rule to a local settings file */
     saveLocalRule(toolId: string, action: PolicyAction): void {
-        const dir = path.join(process.cwd(), ".orbit");
+        const dir = path.join(workspaceRoot(), ".orbit");
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const filePath = path.join(dir, "settings.local.json");
 
@@ -214,14 +214,17 @@ class ToolPolicyEngine {
         fs.writeFileSync(filePath, JSON.stringify(settings, null, 2));
 
         // Reload local layer
-        this.loadConfigLayers();
     }
 
     /**
      * Evaluate access for a specific tool, optionally with arguments for wildcard matching.
      */
     evaluate(toolId: string, args?: Record<string, any>): { action: PolicyAction; reason?: string; explicit?: boolean } {
-        for (const layer of this.layers) {
+        return this.evaluateLayers(this.getLayers(), toolId, args);
+    }
+
+    private evaluateLayers(layers: PolicyLayer[], toolId: string, args?: Record<string, any>): { action: PolicyAction; reason?: string; explicit?: boolean } {
+        for (const layer of layers) {
             for (const rule of layer.rules) {
                 if (matchesWildcard(rule.toolId, toolId, args)) {
                     log.debug(`Policy "${layer.name}" -> ${toolId}: ${rule.action}`);
@@ -247,12 +250,20 @@ class ToolPolicyEngine {
 
     /** Filter out denied tools from a list */
     filterTools(tools: OrbitTool[]): OrbitTool[] {
-        return tools.filter(t => this.evaluate(t.id).action !== "deny");
+        const layers = this.getLayers();
+        return tools.filter(t => this.evaluateLayers(layers, t.id).action !== "deny");
     }
 
     /** Get all active layers (for debugging/UI) */
     getLayers(): PolicyLayer[] {
-        return [...this.layers];
+        const dir = path.join(workspaceRoot(), ".orbit");
+        const project = loadSettingsFile(path.join(dir, "settings.json"));
+        const local = loadSettingsFile(path.join(dir, "settings.local.json"));
+        return [
+            ...this.layers,
+            { name: "project", priority: 60, rules: project },
+            { name: "local", priority: 65, rules: local },
+        ].sort((left, right) => right.priority - left.priority);
     }
 
     /** Reload configuration layers from disk */
@@ -260,23 +271,7 @@ class ToolPolicyEngine {
         // User settings: ~/.orbit/settings.json
         const userSettingsPath = path.join(os.homedir(), ".orbit", "settings.json");
         const userRules = loadSettingsFile(userSettingsPath);
-        if (userRules.length > 0) {
-            this.addLayer({ name: "user", priority: 80, rules: userRules });
-        }
-
-        // Project settings: .orbit/settings.json
-        const projectSettingsPath = path.join(process.cwd(), ".orbit", "settings.json");
-        const projectRules = loadSettingsFile(projectSettingsPath);
-        if (projectRules.length > 0) {
-            this.addLayer({ name: "project", priority: 60, rules: projectRules });
-        }
-
-        // Local settings: .orbit/settings.local.json
-        const localSettingsPath = path.join(process.cwd(), ".orbit", "settings.local.json");
-        const localRules = loadSettingsFile(localSettingsPath);
-        if (localRules.length > 0) {
-            this.addLayer({ name: "local", priority: 40, rules: localRules });
-        }
+        this.addLayer({ name: "user", priority: 80, rules: userRules });
     }
 }
 
@@ -285,14 +280,6 @@ class ToolPolicyEngine {
 export const policyEngine = new ToolPolicyEngine();
 
 // Layer 1: Hardcoded system policy (highest priority)
-policyEngine.addLayer({
-    name: "policy",
-    priority: 100,
-    rules: [
-        { toolId: "cmd_control", action: "ask", reason: "Ejecución de comando del sistema" },
-    ],
-});
-
 // Layer 5: Session (starts empty, rules added at runtime)
 policyEngine.addLayer({
     name: "session",
@@ -304,7 +291,7 @@ policyEngine.addLayer({
 policyEngine.addLayer({
     name: "default",
     priority: 0,
-    rules: [],
+    rules: [{ toolId: "cmd_control", action: "ask", reason: "Ejecución de comando del sistema" }],
 });
 
 // Load file-based layers on startup

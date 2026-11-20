@@ -247,6 +247,7 @@ interface CLIOptions {
   noLogo?: boolean;
   compact?: boolean;
   wsPort?: number;
+  workspace?: string;
 }
 
 class OrbitCLI {
@@ -254,6 +255,7 @@ class OrbitCLI {
   private rl: Interface | null = null;
   private spinner = new Spinner();
   private model: string;
+  private readonly workspace: string;
   private preferredProvider?: string;
   private permissionRequests: Array<{ requestId: string; toolId: string; description?: string; args?: unknown }> = [];
   private conversationId = randomUUID();
@@ -289,6 +291,7 @@ class OrbitCLI {
     this.wsPort = opts.wsPort || getConfig().server.gatewayPort;
     this.compactMode = opts.compact || false;
     this.noLogo = opts.noLogo || false;
+    this.workspace = path.resolve(opts.workspace || process.cwd());
   }
 
   async start() {
@@ -297,7 +300,7 @@ class OrbitCLI {
       if (this.compactMode) {
         process.stdout.write(renderCondensedLogo(this.model));
       } else {
-        process.stdout.write(renderFullLogo(this.model, process.cwd()));
+        process.stdout.write(renderFullLogo(this.model, this.workspace));
         process.stdout.write(renderTips());
         process.stdout.write(`${C.dim}  Escribe ${C.accent}/help${C.dim} para ver comandos · ${C.accent}/exit${C.dim} para salir${RESET}\n\n`);
       }
@@ -505,7 +508,7 @@ class OrbitCLI {
 
   private sendWs(obj: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(obj));
+      this.ws.send(JSON.stringify({ ...obj, payload: { ...obj.payload, workspace: this.workspace } }));
     }
   }
 
@@ -845,6 +848,7 @@ export async function runChat(args = process.argv.slice(2)) {
     else if (arg === "--no-logo") { opts.noLogo = true; }
     else if (arg === "--compact") { opts.compact = true; }
     else if (arg === "--port" && args[i + 1]) { opts.wsPort = parseInt(args[++i], 10); }
+    else if (arg === "--workspace" && args[i + 1]) { opts.workspace = args[++i]; }
     else if (arg === "chat") { /* subcommand, ignore */ }
     else if (arg === "--help" || arg === "-h") {
       console.log(`
@@ -858,6 +862,7 @@ ${BOLD}Opciones:${RESET}
   --no-logo          No mostrar banner de inicio
   --compact          Mostrar logo condensado
   --port <numero>    Puerto del WebSocket gateway (default: 18789)
+  --workspace <ruta> Carpeta para búsquedas, edición y comandos
   -h, --help         Mostrar esta ayuda
 
 ${BOLD}Atajos:${RESET}

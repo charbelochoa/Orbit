@@ -130,6 +130,20 @@ ipcMain.handle("orbit:open-config", event => {
   return openProviderSettings();
 });
 
+ipcMain.handle("orbit:select-workspace", async (event, defaultPath) => {
+  if (!event.senderFrame?.url?.startsWith(webUrl + "/")) throw new Error("Origen de Orbit inválido.");
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: "Elegir carpeta de trabajo",
+    defaultPath: typeof defaultPath === "string" ? defaultPath : app.getPath("documents"),
+    properties: ["openDirectory"],
+  });
+  return selection.canceled ? null : selection.filePaths[0];
+});
+
+ipcMain.on("app:minimize", event => {
+  if (event.sender === mainWindow?.webContents) mainWindow.minimize();
+});
+
 function createTray() {
   let icon;
   if (fs.existsSync(ICON_PATH)) {

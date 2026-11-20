@@ -6,6 +6,7 @@
 import os from "os";
 import path from "path";
 import { execSync } from "child_process";
+import { workspaceRoot } from "./workspace.js";
 
 // ── Path normalization ───────────────────────────────────────────────────────
 
@@ -17,7 +18,7 @@ export function normalizePath(p: string): string {
         p = path.join(os.homedir(), p.slice(1));
     }
     // Normalize separators and resolve ./ ../
-    return path.resolve(p);
+    return path.resolve(workspaceRoot(), p);
 }
 
 /** Check if a string looks like a Windows absolute path (C:\..., \\server\...). */

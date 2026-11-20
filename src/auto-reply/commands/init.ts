@@ -1,3 +1,4 @@
+import { workspaceRoot } from "../../core/workspace.js";
 /**
  * /init — Analiza el proyecto actual y genera ORBIT.md
  *
@@ -140,7 +141,7 @@ function detectScripts(cwd: string): Record<string, string> {
 }
 
 export const initCommand: CommandHandler = async (ctx) => {
-    const cwd = process.cwd();
+    const cwd = workspaceRoot();
     const projectName = path.basename(cwd);
     const orbitMdPath = path.join(cwd, "ORBIT.md");
 

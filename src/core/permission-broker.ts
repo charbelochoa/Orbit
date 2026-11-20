@@ -15,6 +15,7 @@
 import { createLogger }  from "../infra/logger.js";
 import { broadcast }     from "../gateway/server.js";
 import { policyEngine }  from "./tool-policy.js";
+import { workspaceRoot, withWorkspace } from "./workspace.js";
 
 const log = createLogger("permission-broker");
 
@@ -37,6 +38,7 @@ interface Pending {
     resolve: (answer: PermissionAnswer) => void;
     timer:   ReturnType<typeof setTimeout>;
     cleanup: () => void;
+    workspace: string;
 }
 
 const _pending = new Map<string, Pending>();
@@ -83,7 +85,7 @@ export function requestPermission(
         const abort = () => resolvePermission(requestId, "deny");
         signal?.addEventListener("abort", abort, { once: true });
         const cleanup = () => signal?.removeEventListener("abort", abort);
-        _pending.set(requestId, { req, resolve, timer, cleanup });
+        _pending.set(requestId, { req, resolve, timer, cleanup, workspace: workspaceRoot() });
 
         // Broadcast to all connected clients
         broadcast({
@@ -115,7 +117,7 @@ export function resolvePermission(requestId: string, answer: PermissionAnswer): 
     // Persist "always allow" to local settings
     if (answer === "always") {
         try {
-            policyEngine.saveLocalRule(toolId, "allow");
+            withWorkspace(pending.workspace, () => policyEngine.saveLocalRule(toolId, "allow"));
             log.info(`Regla persistida: allow ${toolId}`);
         } catch (err: any) {
             log.warn(`No se pudo persistir la regla: ${err.message}`);
