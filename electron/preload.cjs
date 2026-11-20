@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld("orbitElectron", {
     platform: process.platform,
     openProviderSettings: () => ipcRenderer.invoke("orbit:open-config"),
     selectWorkspace: current => ipcRenderer.invoke("orbit:select-workspace", current),
+    getProviderSettings: () => ipcRenderer.invoke("orbit:provider-settings"),
+    saveProvider: settings => ipcRenderer.invoke("orbit:save-provider", settings),
 
     // Enviar evento al main process
     send: (channel, data) => {

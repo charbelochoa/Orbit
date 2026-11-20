@@ -4,6 +4,7 @@ const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, screen, glo
 const { spawn, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const { publicSettings, saveProvider, providerEnvironment } = require("./provider-settings.cjs");
 
 const ROOT = path.join(__dirname, "..");
 const ICON_PATH = path.join(ROOT, "assets", "icon.png");
@@ -48,12 +49,14 @@ function startBackend() {
   if (!fs.existsSync(entry)) throw new Error("Falta la compilación del agente. Ejecuta npm run build.");
   const workspace = process.env.ORBIT_WORKSPACE || (IS_PACKED ? app.getPath("documents") : ROOT);
   const logDir = path.join(orbitHome(), "logs");
+  const settingsEnv = providerEnvironment(orbitHome(), warn);
   fs.mkdirSync(logDir, { recursive: true });
   const logStream = fs.createWriteStream(path.join(logDir, "backend.log"), { flags: "a" });
   const child = spawn(process.execPath, [entry], {
     cwd: workspace,
     env: {
       ...process.env,
+      ...settingsEnv,
       ORBIT_HOME: orbitHome(),
       ORBIT_ENGINE_DIR: IS_PACKED ? path.join(process.resourcesPath, "engine") : path.join(ROOT, "engine"),
       ELECTRON_RUN_AS_NODE: "1",
@@ -128,6 +131,22 @@ async function openProviderSettings() {
 ipcMain.handle("orbit:open-config", event => {
   if (!event.senderFrame?.url?.startsWith(webUrl + "/")) throw new Error("Origen de Orbit inválido.");
   return openProviderSettings();
+});
+
+function requireOrbitWindow(event) {
+  if (event.sender !== mainWindow?.webContents || !event.senderFrame?.url?.startsWith(webUrl + "/")) {
+    throw new Error("Origen de Orbit inválido.");
+  }
+}
+
+ipcMain.handle("orbit:provider-settings", event => {
+  requireOrbitWindow(event);
+  return publicSettings(orbitHome());
+});
+
+ipcMain.handle("orbit:save-provider", (event, input) => {
+  requireOrbitWindow(event);
+  return saveProvider(orbitHome(), input);
 });
 
 ipcMain.handle("orbit:select-workspace", async (event, defaultPath) => {

@@ -10,6 +10,7 @@ dist-installer/
 .env
 .env.local
 .env.*.local
+.orbit/
 
 # Logs
 *.log
