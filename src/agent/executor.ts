@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createPlan, type PlanStep } from "./planner.js";
+import { createPlan, type PlanOptions, type PlanStep } from "./planner.js";
 import { analyzeError, ErrorDecision } from "./error-handler.js";
 import { executeTool } from "../actions/index.js";
 import { broadcast } from "../gateway/server.js";
@@ -32,7 +32,10 @@ export class AgentExecutor {
     private resumeExecution?: () => void;
     private resumeGate?: Promise<void>;
 
-    constructor(private readonly sessionId: string = randomUUID()) {}
+    constructor(
+        private readonly sessionId: string = randomUUID(),
+        private readonly planOptions: Omit<PlanOptions, "signal"> = {},
+    ) {}
 
     cancel(reason = new Error("Ejecución cancelada por el usuario.")): void {
         this.controller.abort(reason);
@@ -60,7 +63,10 @@ export class AgentExecutor {
         const taskId = this.sessionId;
         signal.throwIfAborted();
         let checkpoint: TaskCheckpoint = journal?.checkpoint ?? {
-            steps: (await createPlan(goal, "", AbortSignal.any([signal, AbortSignal.timeout(180_000)]))).steps,
+            steps: (await createPlan(goal, {
+                ...this.planOptions,
+                signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
+            })).steps,
             states: {},
         };
         signal.throwIfAborted();

@@ -49,7 +49,11 @@ class SubagentRegistryClass {
         const id = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const fullConfig: SubagentConfig = { ...config, id };
 
-        const executor = new AgentExecutor();
+        const executor = new AgentExecutor(id, {
+            context: config.context?.slice(0, 8000),
+            toolProfile: config.toolProfile,
+            maxSteps: config.maxSteps ?? 8,
+        });
         const record: SubagentRecord = {
             config:    fullConfig,
             status:    "pending",

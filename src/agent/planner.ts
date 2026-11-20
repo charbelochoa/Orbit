@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { generateText } from "../providers/registry.js";
 import { getConfig } from "../config/config.js";
-import { toolRegistry } from "../core/registry.js";
+import { toolRegistry, type ToolProfile } from "../core/registry.js";
 import { policyEngine } from "../core/tool-policy.js";
 import { skillRegistry } from "../skills/registry.js";
 import { IterationBudget } from "./iteration-budget.js";
@@ -18,13 +18,26 @@ const stepSchema = z.object({
 const delegatedTools = new Set(["agent_task", "task_create", "spawn_subagent", "run_swarm"]);
 export type PlanStep = z.infer<typeof stepSchema>;
 
-export async function createPlan(goal: string, context = "", signal?: AbortSignal): Promise<{ goal: string; steps: PlanStep[] }> {
+export interface PlanOptions {
+    context?: string;
+    signal?: AbortSignal;
+    toolProfile?: ToolProfile;
+    maxSteps?: number;
+}
+
+export async function createPlan(goal: string, options: PlanOptions = {}): Promise<{ goal: string; steps: PlanStep[] }> {
+    const { context = "", signal, toolProfile, maxSteps } = options;
     const config = getConfig();
+    if (maxSteps !== undefined && (!Number.isInteger(maxSteps) || maxSteps < 1)) {
+        throw new Error("El límite de pasos debe ser un entero positivo.");
+    }
+    const stepLimit = Math.min(config.agent.maxPlanSteps, maxSteps ?? config.agent.maxPlanSteps);
     const catalog = policyEngine.filterTools(toolRegistry.getByProfile(config.toolProfile))
-        .filter(tool => !delegatedTools.has(tool.id))
+        .filter(tool => !delegatedTools.has(tool.id) && (!toolProfile || tool.profiles.includes(toolProfile)))
         .map(({ id, description, parameters }) => ({ name: id, description, parameters }));
+    if (!catalog.length) throw new Error("El perfil activo no tiene herramientas para esta tarea.");
     const toolNames = new Set(catalog.map(tool => tool.name));
-    const schema = z.object({ steps: z.array(stepSchema).min(1).max(config.agent.maxPlanSteps) });
+    const schema = z.object({ steps: z.array(stepSchema).min(1).max(stepLimit) });
     const skills = skillRegistry.findRelevant(goal, 3).map(skill => ({
         name: skill.metadata.name,
         guidance: skill.content.slice(0, 800),
@@ -35,7 +48,7 @@ export async function createPlan(goal: string, context = "", signal?: AbortSigna
         "Use only tools and arguments from the catalog. Give each step a unique positive integer ID.",
         "List all prerequisite step IDs in dependsOn. Independent steps may run concurrently.",
         'To reuse an earlier tool result, use "{{step_1}}" in a string parameter and depend on step 1.',
-        `Use at most ${config.agent.maxPlanSteps} steps. Use the smallest plan that verifies the goal.`,
+        `Use at most ${stepLimit} steps. Use the smallest plan that verifies the goal.`,
         JSON.stringify(catalog),
     ].join("\n");
     const budget = new IterationBudget(config.agent.maxReplans + 1);
