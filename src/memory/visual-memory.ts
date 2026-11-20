@@ -18,7 +18,7 @@
  *   pruneOldEntries()           → delete entries past retentionDays
  */
 
-import Database                         from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import screenshot                       from "screenshot-desktop";
 import os                               from "os";
 import fs                               from "fs/promises";
@@ -53,9 +53,9 @@ export interface IndexScreenshotOptions {
 
 // ── DB helpers ───────────────────────────────────────────────────────────────
 
-function openDb(): Database.Database {
-    const db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
+function openDb(): DatabaseSync {
+    const db = new DatabaseSync(DB_PATH);
+    db.exec("PRAGMA journal_mode = WAL");
     db.exec(`
         CREATE TABLE IF NOT EXISTS visual_screenshots (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,

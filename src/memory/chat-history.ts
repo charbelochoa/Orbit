@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -9,7 +9,7 @@ const DB_PATH = path.join(__dirname, "../../data/history.db");
 // Asegurar que el directorio existe
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-const db = new Database(DB_PATH);
+const db = new DatabaseSync(DB_PATH);
 
 // Crear tabla si no existe
 db.exec(` CREATE TABLE IF NOT EXISTS messages ( id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, timestamp TEXT NOT NULL DEFAULT (datetime('now')) ); CREATE INDEX IF NOT EXISTS idx_session ON messages (session_id);

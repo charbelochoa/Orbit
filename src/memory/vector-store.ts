@@ -12,7 +12,8 @@
  * FTS5 is the fallback when no embedding provider is available.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import { inTransaction } from "./sqlite.js";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
@@ -57,16 +58,15 @@ export interface SyncProgress {
 // ── Store ────────────────────────────────────────────────────────────────────
 
 export class VectorMemoryStore {
-    private db: Database.Database;
+    private db: DatabaseSync;
     private embeddingProvider: EmbeddingProvider | null = null;
     private embeddingDimensions: number = 0;
 
     constructor(dbPath?: string) {
         const finalPath = dbPath || DB_PATH;
         fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-        this.db = new Database(finalPath);
-        this.db.pragma("journal_mode = WAL");
-        this.db.pragma("synchronous = NORMAL");
+        this.db = new DatabaseSync(finalPath);
+        this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
         this._initSchema();
         this.embeddingProvider = getEmbeddingProvider();
         if (this.embeddingProvider) {
@@ -156,7 +156,7 @@ export class VectorMemoryStore {
         );
 
         const chunkIds: number[] = [];
-        const insertAll = this.db.transaction(() => {
+        inTransaction(this.db, () => {
             for (const chunk of chunks) {
                 const info = insertChunk.run(
                     filePath, chunk.index, chunk.text, chunk.tokens, chunk.startChar, chunk.endChar
@@ -166,7 +166,6 @@ export class VectorMemoryStore {
                 insertFts.run(chunk.text, filePath, chunkId);
             }
         });
-        insertAll();
 
         // Generate embeddings (if provider available)
         if (this.embeddingProvider) {
@@ -230,12 +229,11 @@ export class VectorMemoryStore {
 
             const vectors = await this.embeddingProvider.embed(texts);
 
-            const insertBatch = this.db.transaction(() => {
+            inTransaction(this.db, () => {
                 for (let j = 0; j < vectors.length; j++) {
                     insertEmb.run(batchIds[j], JSON.stringify(vectors[j]));
                 }
             });
-            insertBatch();
         }
 
         log.debug(`Generated ${chunks.length} embeddings`);

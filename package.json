@@ -24,7 +24,6 @@
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
-    "better-sqlite3": "^11.5.0",
     "chokidar": "^5.0.0",
     "dotenv": "^16.4.5",
     "micromatch": "^4.0.8",
@@ -37,7 +36,6 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.8.2",
     "@types/node-notifier": "^8.0.5",
     "@types/ws": "^8.5.12",
@@ -107,5 +105,8 @@
       "icon": "assets/icon.png",
       "category": "Utility"
     }
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
