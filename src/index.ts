@@ -165,6 +165,7 @@ async function chat({ text, sessionId, send, signal }: ChatTurn) {
 
 async function voice({ data, sessionId, send, signal }: VoiceTurn) {
     send({ type: "typing", state: "thinking" });
+    let success = false;
     try {
         if (!getConfig().providers.gemini.apiKey) {
             send({ type: "error", message: "Configura GEMINI_API_KEY para usar el micrófono." });
@@ -211,13 +212,17 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
             send({ type: "orbit_message", text: reply });
             if (result.user) void maybeUpdateMemoryAsync(result.user).catch(() => {});
         }
-    } catch {
+        success = true;
+    } catch (error) {
+        if (!signal.aborted) log.warn("Turno de voz fallido:", error instanceof Error ? error.message : String(error));
         send({
             type: "error",
-            message: signal.aborted ? "Turno de voz cancelado." : "Gemini Live no pudo completar el turno de voz.",
+            message: signal.aborted
+                ? signal.reason instanceof Error && signal.reason.name !== "AbortError" ? signal.reason.message : "Turno de voz cancelado."
+                : "Gemini Live no pudo completar el turno de voz.",
         });
     } finally {
-        send({ type: "turn_complete" });
+        send({ type: "turn_complete", success });
         send({ type: "typing", state: "idle" });
     }
 }

@@ -16,6 +16,7 @@ import { providerRegistry } from "../providers/registry.js";
 import { withProviderSelection } from "../providers/selection.js";
 import { resolveWorkspace, withWorkspace, workspaceRoot } from "../core/workspace.js";
 import { KeyedAsyncQueue } from "../infra/keyed-async-queue.js";
+import { MAX_VOICE_BYTES, pcmByteLength, VoiceInput } from "../core/voice-input.js";
 
 // ── Session auth token (generated per process lifetime) ──────────────
 const SESSION_TOKEN = crypto.randomBytes(32).toString("hex");
@@ -35,6 +36,7 @@ interface Client {
     connectedAt: Date;
     authenticated: boolean;
     turn?: AbortController;
+    voiceInput?: { id: string; source: VoiceInput };
     // Rate limiting: message timestamps in rolling window
     msgTimestamps: number[];
 }
@@ -47,7 +49,7 @@ export interface ChatTurn {
 }
 
 type TurnContext = Pick<ChatTurn, "sessionId" | "signal" | "send">;
-export type VoiceTurn = TurnContext & { data: string };
+export type VoiceTurn = TurnContext & { data: string | AsyncIterable<string> };
 type ChatHandler = (turn: ChatTurn) => Promise<void>;
 type VoiceHandler = (turn: VoiceTurn) => Promise<void>;
 const sessionTurns = new KeyedAsyncQueue();
@@ -157,6 +159,28 @@ function isRateLimited(client: Client): boolean {
     return false;
 }
 
+function handleVoicePacket(client: Client, type: string, payload: { requestId?: unknown; pcm?: unknown } | undefined): void {
+    const input = client.voiceInput;
+    if (!input || input.id !== payload?.requestId || client.turn?.signal.aborted) return;
+    if (type === "audio_end") {
+        input.source.finish();
+        return;
+    }
+    if (type === "audio_cancel") {
+        client.turn?.abort();
+        input.source.discard();
+        return;
+    }
+    try {
+        const pcm = payload?.pcm;
+        if (typeof pcm !== "string") throw new Error("Falta el fragmento del micrófono.");
+        input.source.append(pcm);
+    } catch (error) {
+        client.turn?.abort(error);
+        input.source.discard();
+    }
+}
+
 export async function startGateway(
     speakFn: (text: string) => void,
     chat: ChatHandler,
@@ -197,11 +221,12 @@ export async function startGateway(
             try {
                 const client = clients.get(id);
                 if (!client) return;
-                if (isRateLimited(client)) {
+                const msg = JSON.parse(data.toString());
+                const voicePacket = ["audio_chunk", "audio_end", "audio_cancel"].includes(msg.type);
+                if ((!voicePacket || !client.authenticated) && isRateLimited(client)) {
                     ws.send(JSON.stringify({ type: "error", message: "Rate limit: demasiados mensajes. Espera un momento." }));
                     return;
                 }
-                const msg = JSON.parse(data.toString());
 
                 // Handle auth message for clients that didn't pass token in URL
                 if (msg.type === "auth") {
@@ -215,6 +240,10 @@ export async function startGateway(
                 // Require auth for mutating operations
                 if (!client.authenticated && msg.type !== "ping") {
                     ws.send(JSON.stringify({ type: "error", message: "No autenticado. Envía {type:'auth', token:'...'} primero." }));
+                    return;
+                }
+                if (voicePacket) {
+                    handleVoicePacket(client, msg.type, msg.payload);
                     return;
                 }
 
@@ -308,11 +337,43 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
 
         case "audio": {
             const data = payload?.pcm;
-            if (typeof data !== "string" || data.length > 1_280_000 || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+=*$/.test(data)) {
+            if (typeof data !== "string" || !pcmByteLength(data, MAX_VOICE_BYTES)) {
                 client.ws.send(JSON.stringify({ type: "error", message: "Orbit recibió audio inválido." }));
                 break;
             }
-            await runClientTurn(client, payload?.conversationId, context => voice({ ...context, data }));
+            await runClientTurn(client, payload?.conversationId, context => voice({ ...context, data }), payload?.requestId);
+            break;
+        }
+
+        case "audio_start": {
+            const id = payload?.requestId;
+            if (typeof id !== "string" || !/^[\w-]{1,100}$/.test(id)) {
+                client.ws.send(JSON.stringify({ type: "error", message: "El turno de audio requiere un identificador válido." }));
+                break;
+            }
+            if (client.turn || client.voiceInput) {
+                client.ws.send(JSON.stringify({ type: "error", requestId: id, message: "Ya hay un turno en curso." }));
+                break;
+            }
+            const source = new VoiceInput();
+            client.voiceInput = { id, source };
+            try {
+                await runClientTurn(client, payload?.conversationId, async context => {
+                    const discard = () => source.discard();
+                    context.signal.addEventListener("abort", discard, { once: true });
+                    const timer = setTimeout(() => source.finish(), 35_000);
+                    try {
+                        context.send({ type: "audio_started" });
+                        await voice({ ...context, data: source });
+                    } finally {
+                        clearTimeout(timer);
+                        context.signal.removeEventListener("abort", discard);
+                    }
+                }, id);
+            } finally {
+                source.discard();
+                if (client.voiceInput?.id === id) client.voiceInput = undefined;
+            }
             break;
         }
 
