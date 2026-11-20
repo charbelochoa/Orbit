@@ -36,6 +36,7 @@ import { policyEngine } from "./core/tool-policy.js";
 import { getQueue } from "./agent/task-queue.js";
 import { subagentRegistry } from "./agent/subagent-registry.js";
 import { stopSwarms } from "./agent/swarm.js";
+import { loopRegistry } from "./agent/loop-registry.js";
 import { fenceRecalledContext } from "./context/memory-fence.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -236,6 +237,7 @@ async function main() {
             const suspended = queue?.stop();
             stopSwarms();
             subagentRegistry.stopAll();
+            loopRegistry.stopAll();
             if (gateway) stopGateway(gateway);
             webServer?.close();
             ruleEngine.stop();

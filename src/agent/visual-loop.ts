@@ -15,10 +15,12 @@
 import { captureDesktopPng, pngDimensions } from "../actions/screenshot.js";
 import { analyzeImage } from "../providers/vision.js";
 import { createLogger } from "../infra/logger.js";
+import { raceWithAbortSignal } from "../infra/race-abort.js";
+import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
 import { broadcast } from "../gateway/server.js";
 import { getConfig } from "../config/config.js";
-import { computerControl } from "../actions/computer-control.js";
-import { desktopPoint, dragPointer, getScreenSize } from "../actions/ps-bridge.js";
+import { executeTool } from "../actions/index.js";
+import { getScreenSize } from "../actions/ps-bridge.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { buildVisualSystemPrompt } from "./visual-prompt.js";
 import { parseVisualAction } from "./vision-action-parser.js";
@@ -73,13 +75,9 @@ async function executeVisualAction(action: VisualAction, signal?: AbortSignal): 
         case "hotkey":
         case "scroll":
         case "move":
-            return computerControl(action, signal);
-        case "drag": {
-            const from = desktopPoint(action.x, action.y);
-            const to = desktopPoint(action.endX, action.endY);
-            await dragPointer(to, from, signal);
-            return `Arrastre completado de (${from.join(", ")}) a (${to.join(", ")}).`;
-        }
+            return executeTool("computer_control", action, signal);
+        case "drag":
+            return executeTool("drag", { from_x: action.x, from_y: action.y, to_x: action.endX, to_y: action.endY }, signal);
         case "wait":
             await delay(2000, undefined, { signal });
             return "Waited 2 seconds.";
@@ -99,7 +97,8 @@ async function executeVisualAction(action: VisualAction, signal?: AbortSignal): 
 export class VisualAgentLoop {
     private _status: VisualLoopStatus = "idle";
     private _isPaused = false;
-    private _isStopped = false;
+    private _controller?: AbortController;
+    private _pauseRevision = 0;
     private _pausePromise: Promise<void> | null = null;
     private _resumeResolve: (() => void) | null = null;
 
@@ -107,8 +106,9 @@ export class VisualAgentLoop {
 
     /** Pause the loop — blocks at next iteration until resume() is called. */
     pause(): void {
-        if (this._status !== "running") return;
+        if (this._status !== "running" || this._controller?.signal.aborted) return;
         this._isPaused = true;
+        this._pauseRevision++;
         this._pausePromise = new Promise(r => { this._resumeResolve = r; });
         this._status = "paused";
         log.info("Loop paused");
@@ -118,20 +118,23 @@ export class VisualAgentLoop {
     /** Resume a paused loop. */
     resume(): void {
         if (!this._isPaused) return;
-        this._isPaused = false;
+        this.releasePause();
         this._status = "running";
-        this._resumeResolve?.();
-        this._pausePromise = null;
         log.info("Loop resumed");
         broadcast({ type: "visual_loop_status", status: "running" });
     }
 
+    private releasePause(): void {
+        this._isPaused = false;
+        this._resumeResolve?.();
+        this._resumeResolve = null;
+        this._pausePromise = null;
+    }
+
     /** Stop the loop cleanly after the current step completes. */
     stop(): void {
-        this._isStopped = true;
-        // Also unblock if paused
-        if (this._isPaused) this.resume();
-        log.info("Loop stop requested");
+        this._controller?.abort(new Error("Se detuvo la tarea visual."));
+        this.releasePause();
     }
 
     /**
@@ -142,20 +145,21 @@ export class VisualAgentLoop {
      */
     async run(goal: string, opts?: VisualLoopOptions): Promise<VisualLoopResult> {
         const cfg = getConfig().agent;
-        const maxLoops = opts?.maxLoops ?? cfg?.maxVisualLoops ?? 25;
+        const requested = opts?.maxLoops ?? cfg.maxVisualLoops;
+        if (!Number.isInteger(requested) || requested < 1) throw new Error("Indica al menos un paso visual.");
+        const maxLoops = Math.min(requested, cfg.maxVisualLoops);
+        if (this._controller) throw new Error("Ya hay una tarea en este agente visual.");
+        const controller = new AbortController();
+        const signal = opts?.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
+        signal.throwIfAborted();
+        this._controller = controller;
         const startTime = Date.now();
         const steps: VisualLoopStep[] = [];
         const messages: ChatMessage[] = [];
 
         this._status = "running";
-        this._isPaused = false;
-        this._isStopped = false;
         opts?.onStatus?.("running");
         broadcast({ type: "visual_loop_status", status: "running", goal });
-
-        // Get screen info for system prompt
-        const [screenW, screenH] = await getScreenSize(opts?.signal);
-        const systemPrompt = buildVisualSystemPrompt(screenW, screenH);
 
         // Initial user message with the goal
         messages.push({ role: "user", content: `TASK: ${goal}` });
@@ -163,41 +167,40 @@ export class VisualAgentLoop {
         log.info(`Visual loop started — goal: "${goal.slice(0, 80)}" maxLoops: ${maxLoops}`);
 
         let loopIndex = 0;
+        let consecutiveFailures = 0;
+        const finish = (status: VisualLoopStatus, summary: string): VisualLoopResult => {
+            this._controller = undefined;
+            this.releasePause();
+            this._status = status;
+            opts?.onStatus?.(status);
+            broadcast({ type: "visual_loop_status", status, result: summary });
+            return { status, steps, totalLoops: loopIndex, summary, elapsedMs: Date.now() - startTime };
+        };
 
-        while (loopIndex < maxLoops && !this._isStopped) {
-            // ── Pause gate ───────────────────────────────────────────────
-            if (this._isPaused && this._pausePromise) {
-                await this._pausePromise;
-            }
-            if (this._isStopped) break;
-
-            // ── Check AbortSignal ────────────────────────────────────────
-            if (opts?.signal?.aborted) {
-                this._isStopped = true;
-                break;
-            }
-
+        while (loopIndex < maxLoops && !signal.aborted) {
             const stepStart = Date.now();
-            loopIndex++;
-            log.info(`Loop ${loopIndex}/${maxLoops}`);
-
             try {
-                // 1. Screenshot
-                const { base64, display } = await captureScreenshot(opts?.signal);
-
-                // 2. Build the message with screenshot
-                // We append the screenshot as a user message describing current state.
-                // The provider registry's generateText only supports text messages,
-                // so we describe the visual context textually + pass screenshot ref.
-                // For actual multimodal, we use Gemini's inline data via a direct call fallback.
-                const vlmResponse = await this._callVLM(systemPrompt, messages, base64, display, opts?.signal);
+                while (this._pausePromise) await raceWithAbortSignal(this._pausePromise, signal);
+                signal.throwIfAborted();
+                const revision = this._pauseRevision;
+                loopIndex++;
+                const { base64, display } = await captureScreenshot(signal);
+                if (revision !== this._pauseRevision) continue;
+                const systemPrompt = buildVisualSystemPrompt(display.logicalWidth, display.logicalHeight);
+                const vlmResponse = await this._callVLM(systemPrompt, messages, base64, display, signal);
+                signal.throwIfAborted();
+                if (revision !== this._pauseRevision) continue;
 
                 // 3. Parse action
                 const action = parseVisualAction(vlmResponse);
                 log.info(`Step ${loopIndex}: Thought="${(action.thought || "").slice(0, 80)}" Action=${action.action}`);
 
                 // 4. Execute action
-                const toolOutput = await executeVisualAction(action, opts?.signal);
+                const toolOutput = await executeVisualAction(action, signal);
+                signal.throwIfAborted();
+                const failure = getToolFailure(toolOutput);
+                if (failure) throw failure;
+                consecutiveFailures = 0;
 
                 // 5. Build step record
                 const step: VisualLoopStep = {
@@ -241,75 +244,33 @@ export class VisualAgentLoop {
 
                 // 8. Check terminal actions
                 if (action.action === "finished") {
-                    this._status = "finished";
-                    opts?.onStatus?.("finished");
-                    broadcast({ type: "visual_loop_status", status: "finished", result: action.result });
-                    log.info(`Loop finished: ${action.result}`);
-                    return {
-                        status: "finished",
-                        steps,
-                        totalLoops: loopIndex,
-                        summary: action.result || "Task completed.",
-                        elapsedMs: Date.now() - startTime,
-                    };
+                    return finish("finished", action.result || "Tarea visual completada.");
                 }
 
                 if (action.action === "call_user") {
-                    this._status = "call_user";
-                    opts?.onStatus?.("call_user");
-                    broadcast({ type: "visual_loop_status", status: "call_user", result: action.result });
-                    log.info(`Loop needs user: ${action.result}`);
-                    return {
-                        status: "call_user",
-                        steps,
-                        totalLoops: loopIndex,
-                        summary: action.result || "Need user input.",
-                        elapsedMs: Date.now() - startTime,
-                    };
+                    return finish("call_user", action.result || "Orbit necesita que intervengas.");
                 }
 
-            } catch (err: any) {
-                log.error(`Loop ${loopIndex} error: ${err.message}`);
+            } catch (error) {
+                if (signal.aborted) break;
+                const message = error instanceof Error ? error.message : String(error);
+                log.error(`Paso visual ${loopIndex}: ${message}`);
                 steps.push({
                     loopIndex,
-                    action: { action: "wait", thought: `Error: ${err.message}` },
+                    action: { action: "wait" },
                     startedAt: stepStart,
                     durationMs: Date.now() - stepStart,
-                    toolOutput: `Error: ${err.message}`,
+                    toolOutput: `Error: ${message}`,
                 });
-
-                // On error, try to continue unless it's catastrophic
-                if (loopIndex >= 3 && steps.slice(-3).every(s => s.toolOutput?.startsWith("Error:"))) {
-                    this._status = "error";
-                    opts?.onStatus?.("error");
-                    broadcast({ type: "visual_loop_status", status: "error", error: err.message });
-                    return {
-                        status: "error",
-                        steps,
-                        totalLoops: loopIndex,
-                        summary: `Failed after ${loopIndex} loops: ${err.message}`,
-                        elapsedMs: Date.now() - startTime,
-                    };
+                if ((error instanceof OrbitToolError && error.code === "PERMISSION_DENIED") || ++consecutiveFailures >= 3) {
+                    return finish("error", message);
                 }
             }
         }
 
-        // Exited loop — either maxLoops or stopped
-        const finalStatus: VisualLoopStatus = this._isStopped ? "stopped" : "max_loops";
-        this._status = finalStatus;
-        opts?.onStatus?.(finalStatus);
-        broadcast({ type: "visual_loop_status", status: finalStatus });
-        log.info(`Loop ended: ${finalStatus} after ${loopIndex} iterations`);
-
-        return {
-            status: finalStatus,
-            steps,
-            totalLoops: loopIndex,
-            summary: this._isStopped
-                ? "Loop stopped by user."
-                : `Reached maximum loops (${maxLoops}) without completing the task.`,
-            elapsedMs: Date.now() - startTime,
-        };
+        if (signal.aborted) return finish("stopped", "Tarea visual detenida.");
+        if (consecutiveFailures === loopIndex) return finish("error", steps.at(-1)?.toolOutput || "Falló la tarea visual.");
+        return finish("max_loops", `Se alcanzó el límite de ${maxLoops} pasos visuales.`);
     }
 
     private async _callVLM(

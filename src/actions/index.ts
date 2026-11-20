@@ -208,14 +208,12 @@ case "visual_task": {
         const loopId = `vl_${Date.now()}`;
         const loop = new VisualAgentLoop();
         loopRegistry.register(loopId, loop);
-        const stop = () => loop.stop();
-        signal?.addEventListener("abort", stop, { once: true });
         try {
             signal?.throwIfAborted();
             const loopResult = await loop.run(goal, { maxLoops: args?.maxLoops, signal });
-            result = `[${loopResult.status}] (${loopResult.totalLoops} pasos, ${Math.round(loopResult.elapsedMs / 1000)}s) ${loopResult.summary}`;
+            const summary = `[${loopResult.status}] (${loopResult.totalLoops} pasos, ${Math.round(loopResult.elapsedMs / 1000)}s) ${loopResult.summary}`;
+            result = loopResult.status === "finished" ? summary : `Error: ${summary}`;
         } finally {
-            signal?.removeEventListener("abort", stop);
             loopRegistry.unregister(loopId);
         }
         break;

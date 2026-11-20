@@ -19,6 +19,10 @@ class LoopRegistry {
         this._loops.delete(id);
     }
 
+    stopAll(): void {
+        for (const loop of this._loops.values()) loop.stop();
+    }
+
     /** Get a loop by ID. */
     get(id: string): VisualAgentLoop | undefined {
         return this._loops.get(id);
