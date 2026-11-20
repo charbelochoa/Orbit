@@ -4,6 +4,7 @@
  * Allows the agent to spawn background tasks and query their status.
  */
 import { getQueue, TaskPriority } from "../agent/task-queue.js";
+import { cancelWork, getDelegatedOutput, listDelegatedJobs } from "../agent/delegated-jobs.js";
 
 export async function taskCreate(args: { description: string; prompt?: string; priority?: string }): Promise<string> {
     const goal = args.prompt || args.description;
@@ -20,14 +21,15 @@ export async function taskCreate(args: { description: string; prompt?: string; p
 export async function taskGet(args: { task_id: string }): Promise<string> {
     if (!args.task_id) return "Error: se requiere 'task_id'.";
 
-    const info = getQueue().status(args.task_id);
+    const info = getQueue().status(args.task_id) ?? listDelegatedJobs().find(job => job.id === args.task_id);
     if (!info) return `Tarea '${args.task_id}' no encontrada.`;
 
     return JSON.stringify(info, null, 2);
 }
 
 export async function taskList(): Promise<string> {
-    const tasks = getQueue().listAll();
+    const delegated = listDelegatedJobs().map(({ id, goal, status, kind, createdAt }) => ({ id, goal, status, kind, createdAt }));
+    const tasks = [...delegated, ...getQueue().listAll()];
     if (tasks.length === 0) return "No hay tareas en la cola.";
     return JSON.stringify(tasks, null, 2);
 }
@@ -35,7 +37,7 @@ export async function taskList(): Promise<string> {
 export async function taskStop(args: { task_id: string }): Promise<string> {
     if (!args.task_id) return "Error: se requiere 'task_id'.";
 
-    const ok = getQueue().cancel(args.task_id);
+    const ok = cancelWork(args.task_id);
     return ok
         ? `Tarea '${args.task_id}' cancelada.`
         : `No se pudo cancelar '${args.task_id}' (no existe o ya terminó).`;
@@ -44,7 +46,9 @@ export async function taskStop(args: { task_id: string }): Promise<string> {
 export async function taskOutput(args: { task_id: string; from_line?: number }): Promise<string> {
     if (!args.task_id) return "Error: se requiere 'task_id'.";
 
-    const lines = getQueue().output(args.task_id, args.from_line || 0);
+    const fromLine = args.from_line || 0;
+    const delegated = getDelegatedOutput(args.task_id);
+    const lines = delegated !== undefined ? delegated.split("\n").slice(fromLine) : getQueue().output(args.task_id, fromLine);
     if (lines.length === 0) return "Sin output aún.";
     return lines.join("\n");
 }

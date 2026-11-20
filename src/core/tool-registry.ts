@@ -349,7 +349,7 @@ export const TOOL_DECLARATIONS = [
     // ── Spawn subagent (Phase 4.1) ───────────────────────────────────────────
     {
         name: "spawn_subagent",
-        description: "Crea y lanza un subagente autónomo especializado para ejecutar una sub-tarea de forma independiente. El subagente planifica y ejecuta sus propios pasos en paralelo con el agente principal. Úsalo para delegar tareas que no dependen del resultado de otras.",
+        description: "Lanza una subtarea independiente y devuelve el ID del subagente. Usa task_get y task_output con ese ID para consultar su estado y resultado.",
         parameters: {
             type: "OBJECT",
             properties: {
@@ -483,7 +483,7 @@ export const TOOL_DECLARATIONS = [
     },
     {
         name: "task_get",
-        description: "Obtiene el estado y resultado de una tarea en background por su ID.",
+        description: "Obtiene el estado y resultado de una tarea, grupo o subagente por su ID.",
         parameters: {
             type: "OBJECT",
             properties: {
@@ -494,12 +494,12 @@ export const TOOL_DECLARATIONS = [
     },
     {
         name: "task_list",
-        description: "Lista todas las tareas en background con su estado actual.",
+        description: "Lista tareas en segundo plano, grupos y subagentes con su estado actual.",
         parameters: { type: "OBJECT", properties: {} }
     },
     {
         name: "task_stop",
-        description: "Cancela una tarea en background que está pendiente o en ejecución.",
+        description: "Solicita cancelar una tarea, grupo o subagente que está pendiente o en ejecución.",
         parameters: {
             type: "OBJECT",
             properties: {
@@ -510,7 +510,7 @@ export const TOOL_DECLARATIONS = [
     },
     {
         name: "task_output",
-        description: "Obtiene el output streaming de una tarea en background.",
+        description: "Consulta el registro de una tarea en segundo plano o el resultado de un grupo o subagente.",
         parameters: {
             type: "OBJECT",
             properties: {

@@ -56,6 +56,10 @@ export function listSwarms() {
     return Array.from(swarms.values(), ({ controller, ...swarm }) => swarm);
 }
 
+export function getSwarmSummary(id: string): string | undefined {
+    return swarms.get(id)?.summary;
+}
+
 export function cancelSwarm(id: string): boolean {
     const swarm = swarms.get(id);
     if (!swarm || swarm.status !== "running" || swarm.controller.signal.aborted) return false;
@@ -167,7 +171,7 @@ export async function runSwarm(tasks: SwarmTask[], options: SwarmOptions = {}): 
         ...taskResults.map(result => `${result.id} [${result.status}]\n${(result.result || result.error || "").slice(0, 700)}`),
     ].join("\n\n");
     state.status = !failed ? "done" : signal.aborted ? abortOutcome(signal) : "failed";
-    state.summary = summary.slice(0, 1000);
-    broadcast({ type: "swarm_done", swarmId, name, succeeded, failed, durationMs, summary: state.summary, status: state.status, steps: state.steps });
+    state.summary = summary;
+    broadcast({ type: "swarm_done", swarmId, name, succeeded, failed, durationMs, summary: summary.slice(0, 1000), status: state.status, steps: state.steps });
     return { swarmId, name, totalTasks: tasks.length, succeeded, failed, durationMs, tasks: taskResults, summary };
 }
