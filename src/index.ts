@@ -29,6 +29,9 @@ import { errorWatcher }     from "./codebase/error-watcher.js";
 import { runHarnessTurn } from "./agent/text-harness.js";
 import { runInLane } from "./agent/lanes.js";
 import type { ChatMessage } from "./providers/types.js";
+import { buildProjectContext } from "./context/project-facts.js";
+import { skillRegistry } from "./skills/registry.js";
+import { policyEngine } from "./core/tool-policy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = createLogger("Orbit");
@@ -107,12 +110,18 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
         const history = getHistory(sessionId, 24).flatMap<ChatMessage>(({ role, content }) =>
             role === "user" || role === "assistant" ? [{ role, content: content.slice(0, 8000) }] : [],
         );
-        const memory = formatMemoryForPrompt(await loadMemory());
+        const [memoryState, project] = await Promise.all([loadMemory(), buildProjectContext()]);
+        const memory = formatMemoryForPrompt(memoryState);
+        const skills = skillRegistry.findRelevant(text, 3).map(skill => ({
+            name: skill.metadata.name,
+            instructions: skill.content.slice(0, 1000),
+        }));
         const deadline = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
         const reply = await runHarnessTurn({
-            systemPrompt: getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX")),
+            systemPrompt: getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX"), project) +
+                "\n\nSkills para esta tarea\n" + JSON.stringify(skills),
             messages: [...history, { role: "user", content: text }],
-            tools: toolRegistry.getByProfile(getConfig().toolProfile),
+            tools: policyEngine.filterTools(toolRegistry.getByProfile(getConfig().toolProfile)),
             maxIterations: getConfig().agent.maxChatSteps,
             signal: deadline,
             generate: params => providerRegistry.generateText({
@@ -155,10 +164,11 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
             return;
         }
         const deadline = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
-        const memory = formatMemoryForPrompt(await loadMemory());
+        const [memoryState, project] = await Promise.all([loadMemory(), buildProjectContext()]);
+        const memory = formatMemoryForPrompt(memoryState);
         const conversation = getHistory(sessionId, 10)
             .map(message => message.role + ": " + message.content.slice(0, 1800)).join("\n");
-        const systemPrompt = getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX"));
+        const systemPrompt = getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX"), project);
         const result = await runVoiceTurn({
             data,
             systemPrompt: systemPrompt + "\n\nContexto previo de esta conversación\n" + conversation,

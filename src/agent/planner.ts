@@ -5,6 +5,7 @@ import { toolRegistry } from "../core/registry.js";
 import { policyEngine } from "../core/tool-policy.js";
 import { skillRegistry } from "../skills/registry.js";
 import { IterationBudget } from "./iteration-budget.js";
+import { buildProjectContext } from "../context/project-facts.js";
 
 const stepSchema = z.object({
     step: z.number().int().positive(),
@@ -38,13 +39,14 @@ export async function createPlan(goal: string, context = "", signal?: AbortSigna
         JSON.stringify(catalog),
     ].join("\n");
     const budget = new IterationBudget(config.agent.maxReplans + 1);
+    const project = await buildProjectContext();
     let issue = "";
 
     while (budget.consume()) {
         signal?.throwIfAborted();
         const response = await generateText({
             systemPrompt,
-            messages: [{ role: "user", content: JSON.stringify({ goal, context, skills, previousPlanError: issue }) }],
+            messages: [{ role: "user", content: JSON.stringify({ goal, context, skills, project, previousPlanError: issue }) }],
             responseFormat: "json",
             maxTokens: 4096,
             signal,
