@@ -31,10 +31,13 @@ export class GeminiProvider implements LLMProvider {
         return !!getConfig().providers.gemini.apiKey;
     }
 
+    defaultTextModel(): string {
+        return getConfig().providers.gemini.models.fast || "gemini-2.5-flash-lite";
+    }
+
     async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
         const ai = this.getClient();
-        const cfg = getConfig();
-        const model = params.model || cfg.providers.gemini.models["fast"] || "gemini-2.5-flash-lite";
+        const model = params.model || this.defaultTextModel();
 
         const contents: Content[] = params.messages
             .filter(m => m.role !== "system")

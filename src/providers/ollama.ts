@@ -18,10 +18,14 @@ export class OllamaProvider implements LLMProvider {
         return true;
     }
 
+    defaultTextModel(): string {
+        return getConfig().providers.ollama.models.default || "llama3";
+    }
+
     async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
         const cfg = getConfig();
         const baseUrl = cfg.providers.ollama.baseUrl || "http://localhost:11434";
-        const model = params.model || cfg.providers.ollama.models["default"] || "llama3";
+        const model = params.model || this.defaultTextModel();
 
         const messages: any[] = [];
         if (params.systemPrompt) {

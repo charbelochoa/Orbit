@@ -260,14 +260,15 @@ class ProviderRegistryClass {
     }
 
     /** Returns { id, name, models } for the currently active provider. */
-    getActiveInfo(): { id: string; name: string; models: string[] } {
+    getActiveInfo(): { id: string; name: string; model?: string; models: string[] } {
         const selection = this.getConfiguredSelection();
         if (!selection) return { id: "none", name: "none", models: [] };
-        const { provider, model } = selection;
+        const { provider } = selection;
+        const model = selection.model || provider.defaultTextModel();
         const config = Object.entries(getConfig().providers).find(([id]) => id === provider.id)?.[1];
         const configured = Object.values(config?.models ?? {});
         const models = [...new Set([model, ...configured, ...provider.listModels()].filter(Boolean))];
-        return { id: provider.id, name: provider.name, models };
+        return { id: provider.id, name: provider.name, model, models };
     }
 }
 

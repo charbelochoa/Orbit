@@ -16,12 +16,16 @@ export class AnthropicProvider implements LLMProvider {
         return !!getConfig().providers.anthropic.apiKey;
     }
 
+    defaultTextModel(): string {
+        return getConfig().providers.anthropic.models.default || "claude-sonnet-4-20250514";
+    }
+
     async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
         const cfg = getConfig();
         const apiKey = cfg.providers.anthropic.apiKey;
         if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
 
-        const model = params.model || cfg.providers.anthropic.models["default"] || "claude-sonnet-4-20250514";
+        const model = params.model || this.defaultTextModel();
 
         const messages: any[] = params.messages
             .filter(m => m.role !== "system")

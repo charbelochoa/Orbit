@@ -80,6 +80,7 @@ export interface LLMProvider {
     generateText(params: TextGenerationParams): Promise<TextGenerationResult>;
 
     /** List known model IDs for this provider */
+    defaultTextModel(): string;
     listModels(): string[];
 }
 

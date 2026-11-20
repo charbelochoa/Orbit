@@ -16,13 +16,17 @@ export class OpenAIProvider implements LLMProvider {
         return !!getConfig().providers.openai.apiKey;
     }
 
+    defaultTextModel(): string {
+        return getConfig().providers.openai.models.default || "gpt-4o-mini";
+    }
+
     async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
         const cfg = getConfig();
         const apiKey = cfg.providers.openai.apiKey;
         if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
 
         const baseUrl = cfg.providers.openai.baseUrl || "https://api.openai.com/v1";
-        const model = params.model || cfg.providers.openai.models["default"] || "gpt-4o-mini";
+        const model = params.model || this.defaultTextModel();
 
         const messages: any[] = [];
         if (params.systemPrompt) {
