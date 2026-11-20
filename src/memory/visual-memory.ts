@@ -72,10 +72,10 @@ function openDb(): DatabaseSync {
 // ── Caption generation ───────────────────────────────────────────────────────
 
 async function generateCaption(base64img: string, prompt: string, model: string): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const { apiKey, baseUrl } = getConfig().providers.gemini;
     if (!apiKey) throw new Error("GEMINI_API_KEY no configurada");
 
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ apiKey, httpOptions: baseUrl ? { baseUrl } : undefined });
     const response = await ai.models.generateContent({
         model,
         contents: [{

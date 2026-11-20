@@ -106,7 +106,7 @@ case "browser_control": result = await browserControl(args); break;
     //  ── Computer control (mouse/keyboard via PowerShell) ──────────
 case "computer_control": result = await computerControl(args, signal); break;
     //  ── Computer settings (volume, brightness, windows) ──────────
-case "computer_settings": result = await computerSettings(args); break;
+case "computer_settings": result = await computerSettings(args, signal); break;
     //  ── Open applications ─────────────────────────────────────────
 case "open_app": result = await openApp(args); break;
     //  ── Shell / System commands ───────────────────────────────────
@@ -129,7 +129,7 @@ case "web_search": result = await webSearch(args); break;
     //  ── Weather ───────────────────────────────────────────────────
 case "weather_report": result = await weatherReport(args); break;
     //  ── Code helper (write/run/fix/explain code) ──────────────────
-case "code_helper": result = await codeHelper(args); break;
+case "code_helper": result = await codeHelper(args, signal); break;
     //  ── Send message (WhatsApp/Telegram) ──────────────────────────
 case "send_message": result = await sendMessage(args); break;
     //  ── Reminders (Windows Task Scheduler) ────────────────────────
@@ -171,7 +171,7 @@ case "spawn_subagent": {
 case "file_edit": result = await fileEdit(args); break;
     case "glob_search": result = await globTool(args); break;
     case "grep_search": result = await grepTool(args); break;
-    case "web_fetch": result = await webFetch(args); break;
+    case "web_fetch": result = await webFetch(args, signal); break;
     case "todo_read": result = await todoRead(); break;
     case "todo_write": result = await todoWrite(args); break;
     //  ── Phase 7: Task API ─────────────────────────────────────────

@@ -4,6 +4,8 @@
 import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
+import { getConfig } from "../../config/config.js";
+import { providerRegistry } from "../../providers/registry.js";
 import type { CommandHandler } from "../types.js";
 
 function check(label: string, fn: () => string | boolean): string {
@@ -31,19 +33,13 @@ export const doctorCommand: CommandHandler = async (_ctx) => {
     // Git
     lines.push(check("Git", () => execSync("git --version", { encoding: "utf-8" }).trim().replace("git version ", "")));
 
-    // Gateway port
-    lines.push(check("Gateway (puerto 18789)", () => true));
-
-    // Active model
-    const model = process.env.GEMINI_API_KEY ? "gemini" :
-                  process.env.OPENAI_API_KEY ? "openai" :
-                  process.env.ANTHROPIC_API_KEY ? "anthropic" : "ollama";
-    lines.push(check("Modelo activo", () => model));
-
-    // API keys
-    lines.push(check("GEMINI_API_KEY",    () => !!process.env.GEMINI_API_KEY));
-    lines.push(check("OPENAI_API_KEY",    () => !!process.env.OPENAI_API_KEY));
-    lines.push(check("ANTHROPIC_API_KEY", () => !!process.env.ANTHROPIC_API_KEY));
+    const config = getConfig();
+    const active = providerRegistry.getActiveInfo();
+    lines.push(check("Gateway", () => String(config.server.gatewayPort)));
+    lines.push(check("Modelo activo", () => active.model ? `${active.name} · ${active.model}` : false));
+    lines.push(check("GEMINI_API_KEY", () => Boolean(config.providers.gemini.apiKey)));
+    lines.push(check("OPENAI_API_KEY", () => Boolean(config.providers.openai.apiKey)));
+    lines.push(check("ANTHROPIC_API_KEY", () => Boolean(config.providers.anthropic.apiKey)));
 
     // ORBIT.md
     const orbitMd = path.join(process.cwd(), "ORBIT.md");

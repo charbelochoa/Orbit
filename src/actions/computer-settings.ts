@@ -1,9 +1,6 @@
 ﻿import { exec } from "child_process";
 import { promisify } from "util";
-import { GoogleGenAI } from "@google/genai";
-import dotenv from "dotenv";
-
-dotenv.config();
+import { generateText } from "../providers/registry.js";
 
 const execAsync = promisify(exec);
 
@@ -89,10 +86,13 @@ Write-Output "Brillo: $new%"`;
 }
 
 async function closeApp(appName: string): Promise<string> {
-    const safe = appName.replace(/[^a-zA-Z0-9._\- ]/g, "");
-    const script = `Get-Process -Name "*${safe}*" -ErrorAction SilentlyContinue | Stop-Process -Force; Write-Output "ok"`;
-    await runPS(script);
-    return `Aplicacion '${appName}' cerrada.`;
+    const name = appName.trim().replace(/\.exe$/i, "");
+    if (!/^[a-zA-Z0-9._ -]{1,120}$/.test(name)) return "Error: indica el nombre de la aplicación que deseas cerrar.";
+    const result = await runPS(`
+$windows = @(Get-Process -Name '${name}' -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+$requested = @($windows | Where-Object { $_.CloseMainWindow() })
+Write-Output $requested.Count`);
+    return Number(result) > 0 ? `Cierre solicitado para '${name}'.` : `Error: no encontré una ventana de '${name}' para cerrar.`;
 }
 
 async function minimizeWindow(): Promise<string> {
@@ -150,17 +150,14 @@ const KNOWN_ACTIONS: Record<string, (value?: number, app?: string) => Promise<st
     "full_screen":     () => fullScreen(),
 };
 
-async function detectIntent(task: string): Promise<{ action: string; value?: number; app?: string }> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY missing");
-    const ai = new GoogleGenAI({ apiKey });
+async function detectIntent(task: string, signal?: AbortSignal): Promise<{ action: string; value?: number; app?: string }> {
     const actions = Object.keys(KNOWN_ACTIONS).join(", ");
-    const prompt = `Given this user request about computer settings: "${task}"
-Available actions: ${actions}
-Reply ONLY with JSON: {"action": "action_name", "value": number_or_null, "app": "app_name_or_null"}`;
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-lite",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+    const response = await generateText({
+        systemPrompt: `Classify the computer setting requested by the user. Actions are ${actions}. Return JSON with action, optional numeric value, and optional app name.`,
+        messages: [{ role: "user", content: task }],
+        responseFormat: "json",
+        maxTokens: 300,
+        signal,
     });
     let text = response.text || "{}";
     text = text.replace(/```(json)?/gi, "").trim();
@@ -169,7 +166,7 @@ Reply ONLY with JSON: {"action": "action_name", "value": number_or_null, "app": 
 
 // ── Main export ──────────────────────────────────────────────────────────────
 
-export async function computerSettings(parameters: any): Promise<string> {
+export async function computerSettings(parameters: any, signal?: AbortSignal): Promise<string> {
     const action = (parameters?.action ?? "").toLowerCase().replace(/\s+/g, "_").trim();
     const value  = parameters?.value != null ? Number(parameters.value) : undefined;
     const app    = parameters?.app || parameters?.app_name || "";
@@ -177,19 +174,23 @@ export async function computerSettings(parameters: any): Promise<string> {
 
     console.log(`[Computer Settings] ${action || task}`, parameters);
     try {
-        // Direct match
-        if (action && KNOWN_ACTIONS[action]) {
+        signal?.throwIfAborted();
+        if (Object.hasOwn(KNOWN_ACTIONS, action)) {
             return await KNOWN_ACTIONS[action](value, app);
         }
         // LLM intent detection for natural language requests
         if (task || action) {
-            const intent = await detectIntent(task || action);
-            if (intent.action && KNOWN_ACTIONS[intent.action]) {
-                return await KNOWN_ACTIONS[intent.action](intent.value ?? value, intent.app ?? app);
+            const intent = await detectIntent(task || action, signal);
+            signal?.throwIfAborted();
+            if (typeof intent?.action === "string" && Object.hasOwn(KNOWN_ACTIONS, intent.action)) {
+                const requestedValue = typeof intent.value === "number" && Number.isFinite(intent.value) ? intent.value : value;
+                const requestedApp = typeof intent.app === "string" ? intent.app : app;
+                return await KNOWN_ACTIONS[intent.action](requestedValue, requestedApp);
             }
         }
         return `Accion no reconocida: '${action || task}'. Disponibles: ${Object.keys(KNOWN_ACTIONS).join(", ")}`;
     } catch (e: any) {
+        signal?.throwIfAborted();
         console.error(`[Computer Settings] `, e);
         return `Error en computer_settings: ${e.message}`;
     }
