@@ -8,6 +8,7 @@ import { runInLane } from "./lanes.js";
 import { getContextEngine } from "../context/registry.js";
 import { getConfig } from "../config/config.js";
 import { OrbitToolError } from "../core/orbit-error.js";
+import { IterationBudget } from "./iteration-budget.js";
 
 const log = createLogger("executor");
 
@@ -201,10 +202,10 @@ export class AgentExecutor {
             description: step.description,
         });
 
-        let attempt = 0;
+        const budget = new IterationBudget(MAX_RETRIES);
 
-        while (attempt < MAX_RETRIES) {
-            attempt++;
+        while (!this.isCancelled && budget.consume()) {
+            const attempt = MAX_RETRIES - budget.remaining;
             log.info(`Step ${step.step}: [${step.tool}] ${step.description} (intento ${attempt})`);
 
             try {
