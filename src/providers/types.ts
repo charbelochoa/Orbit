@@ -13,6 +13,12 @@ export interface TextGenerationParams {
     maxTokens?:     number;
     responseFormat?: "text" | "json";
     signal?: AbortSignal;
+    image?: ImageAttachment;
+}
+
+export interface ImageAttachment {
+    mimeType: "image/png" | "image/jpeg";
+    data: string;
 }
 
 export interface ChatMessage {

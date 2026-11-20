@@ -4,7 +4,7 @@
  * Note: Gemini Live (audio) stays in index.ts — this is for text-only calls.
  */
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, type Content } from "@google/genai";
 import { getConfig } from "../config/config.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
 
@@ -35,12 +35,13 @@ export class GeminiProvider implements LLMProvider {
         const cfg = getConfig();
         const model = params.model || cfg.providers.gemini.models["fast"] || "gemini-2.5-flash-lite";
 
-        const contents = params.messages
+        const contents: Content[] = params.messages
             .filter(m => m.role !== "system")
             .map(m => ({
                 role: m.role === "assistant" ? "model" : "user",
                 parts: [{ text: m.content }],
             }));
+        if (params.image) contents.at(-1)?.parts?.unshift({ inlineData: params.image });
 
         const response = await ai.models.generateContent({
             model,

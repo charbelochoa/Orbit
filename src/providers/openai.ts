@@ -30,6 +30,13 @@ export class OpenAIProvider implements LLMProvider {
         for (const m of params.messages) {
             messages.push({ role: m.role, content: m.content });
         }
+        if (params.image) {
+            const message = messages.at(-1);
+            message.content = [
+                { type: "text", text: message.content },
+                { type: "image_url", image_url: { url: `data:${params.image.mimeType};base64,${params.image.data}` } },
+            ];
+        }
 
         const body: any = { model, messages };
         if (params.temperature !== undefined) body.temperature = params.temperature;

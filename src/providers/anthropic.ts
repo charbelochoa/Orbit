@@ -25,6 +25,13 @@ export class AnthropicProvider implements LLMProvider {
         const messages: any[] = params.messages
             .filter(m => m.role !== "system")
             .map(m => ({ role: m.role, content: m.content }));
+        if (params.image) {
+            const message = messages.at(-1);
+            message.content = [
+                { type: "image", source: { type: "base64", media_type: params.image.mimeType, data: params.image.data } },
+                { type: "text", text: message.content },
+            ];
+        }
 
         const body: any = {
             model,

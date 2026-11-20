@@ -29,6 +29,7 @@ export class OllamaProvider implements LLMProvider {
         for (const m of params.messages) {
             messages.push({ role: m.role, content: m.content });
         }
+        if (params.image) messages.at(-1).images = [params.image.data];
 
         const body = {
             model, messages, stream: false,
