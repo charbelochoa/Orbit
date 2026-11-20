@@ -112,6 +112,12 @@ function announce(text: string) {
     broadcast({ type: "orbit_message", text });
 }
 
+function persistChatTurn(sessionId: string, user: string, assistant: string): void {
+    if (!user && !assistant) return;
+    saveChatTurn(sessionId, workspaceRoot(), user, assistant);
+    broadcast({ type: "history_changed" });
+}
+
 async function chat({ text, sessionId, send, signal }: ChatTurn) {
     send({ type: "typing", state: "thinking" });
     let success = false;
@@ -147,7 +153,7 @@ async function chat({ text, sessionId, send, signal }: ChatTurn) {
             onUsage: updateTokenUsage,
         });
         const reply = fenceRecalledContext(rawReply) || "No pude componer la respuesta.";
-        saveChatTurn(sessionId, workspaceRoot(), text, reply);
+        persistChatTurn(sessionId, text, reply);
         send({ type: "orbit_message", text: reply });
         success = true;
         void maybeUpdateMemoryAsync(text).catch(() => {});
@@ -204,7 +210,7 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
             },
         });
         const reply = fenceRecalledContext(result.assistant);
-        saveChatTurn(sessionId, workspaceRoot(), result.user, reply);
+        persistChatTurn(sessionId, result.user, reply);
         if (result.user) {
             send({ type: "user_message", text: result.user });
             wakeWordMonitor.check(result.user);

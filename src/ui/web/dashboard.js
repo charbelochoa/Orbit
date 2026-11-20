@@ -67,6 +67,8 @@ try {
 } catch {}
 let recoverLatestConversation = !activeConvId;
 const deletingConversations = new Set();
+let historyRefresh;
+let historyDirty=false;
 function genId(){return 'conv_'+crypto.randomUUID();}
 function persistConversations(){
   try {
@@ -107,6 +109,17 @@ function removeConversation(id){
 
 function requestChatHistory(id){
   if(id)sendWs({type:'history_get',payload:{conversationId:id}});
+}
+
+function refreshConversationIndex(){
+  historyDirty=true;
+  if(sendStreaming||historyRefresh)return;
+  historyRefresh=setTimeout(()=>{
+    historyRefresh=undefined;
+    if(sendStreaming||ws?.readyState!==WebSocket.OPEN)return;
+    historyDirty=false;
+    sendWs({type:'history_list'});
+  },150);
 }
 
 function restoreConversationIndex(items){
@@ -158,6 +171,7 @@ function restoreConversationMessages(snapshot){
   conv.messages=[...stored,...tail];
   conv.syncedThrough=last?.id;
   conv.preview=last?.content||'';
+  if(!last)conv.title='Nueva conversación';
   if(conv.id===activeConvId){
     if(needsRender)reloadConvMessages();
     updateTopbarTitle();
@@ -270,6 +284,7 @@ async function connect() {
         setBadge('ws-badge','ok');
         sendWs({type:'status'});
         sendWs({type:'history_list'});
+        historyDirty=false;
         g('send-btn').disabled = !g('msg-input').value.trim();
         return;
       }
@@ -292,6 +307,7 @@ function handle(msg){
   switch(msg.type){
     case 'orbit_ready':setConn('online');setStatus('');break;
     case 'history_index':restoreConversationIndex(msg.conversations);break;
+    case 'history_changed':refreshConversationIndex();break;
     case 'history_snapshot':restoreConversationMessages(msg);break;
     case 'history_deleted':removeConversation(msg.conversationId);break;
     case 'user_message':if(voiceTurn&&msg.requestId===voiceTurn.id)renameConvFromFirstMessage(msg.text);saveChatMessage('user',msg.text);addUserBubble(msg.text);break;
@@ -300,7 +316,7 @@ function handle(msg){
     case 'voice_audio':if(soundsEnabled)orbitAudio.play(msg.pcm,msg.sampleRate);break;
     case 'voice_interrupted':orbitAudio.stopPlayback();break;
     case 'audio_started':acceptVoiceTurn(msg.requestId);break;
-    case 'turn_complete':if(voiceTurn&&msg.requestId===voiceTurn.id)clearVoiceTurn(msg.success===false);finishStream();showThinking(false);if(!g('status-bar').classList.contains('err'))setStatus('');setSendMode(false);break;
+    case 'turn_complete':if(voiceTurn&&msg.requestId===voiceTurn.id)clearVoiceTurn(msg.success===false);finishStream();showThinking(false);if(!g('status-bar').classList.contains('err'))setStatus('');setSendMode(false);if(historyDirty)refreshConversationIndex();break;
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
     case 'tool_result':finalizeToolBlock(msg.tool,!msg.error,msg.result);finalizeToolEvent(msg.tool,!msg.error,msg.result);break;
     case 'typing':if(voiceTurn&&msg.requestId===voiceTurn.id&&orbitAudio.capture)break;if(msg.state==='thinking'){showThinking(true,'Pensando...');break;}if(msg.state==='executing'){showThinking(false);if(msg.tool)setStatus('Ejecutando: '+msg.tool);break;}showThinking(false);setStatus('');break;

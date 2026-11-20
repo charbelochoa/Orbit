@@ -326,7 +326,10 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             }
             if (isCommand(text)) {
                 await runClientTurn(client, payload?.conversationId, async ({ sessionId, signal, send }) => {
-                    if (text.toLowerCase() === "/clear") clearHistory(sessionId);
+                    if (text.toLowerCase() === "/clear") {
+                        clearHistory(sessionId);
+                        broadcast({ type: "history_changed" });
+                    }
                     await dispatchCommand(text, clientId, client.ws, speakFn, signal);
                     send({ type: "turn_complete" });
                 });
@@ -447,6 +450,7 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             if (client.ws.readyState === WebSocket.OPEN) {
                 client.ws.send(JSON.stringify({ type: "history_deleted", conversationId: id }));
             }
+            broadcast({ type: "history_changed" });
             break;
         }
 
