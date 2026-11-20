@@ -13,14 +13,15 @@ interface VoiceOptions {
     signal: AbortSignal;
     onAudio: (data: string, sampleRate: number) => void;
     onUsage: (input: number, output: number) => void;
-    execute: (name: string, args: Record<string, unknown>) => Promise<string>;
+    execute: (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<string>;
 }
 
 export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: string; assistant: string }> {
     const config = getConfig();
     const { apiKey, baseUrl, models } = config.providers.gemini;
     if (!apiKey) throw new Error("Añade GEMINI_API_KEY en la configuración para usar el micrófono.");
-    const signal = options.signal;
+    const sessionAbort = new AbortController();
+    const signal = AbortSignal.any([options.signal, sessionAbort.signal]);
     signal.throwIfAborted();
 
     const ai = new GoogleGenAI({ apiKey, httpOptions: baseUrl ? { baseUrl } : undefined });
@@ -28,6 +29,9 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
     const allowed = new Set(options.tools.map(tool => tool.name));
     let session: Session | undefined;
     let finished = false;
+    let pendingMessages = Promise.resolve();
+    const cancelledCalls = new Set<string>();
+    const activeCalls = new Map<string, AbortController>();
     let user = "";
     let assistant = "";
     let resolveTurn: () => void;
@@ -59,15 +63,31 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
             const responses: FunctionResponse[] = [];
             for (const call of calls) {
                 signal.throwIfAborted();
-                if (!budget.consume()) throw new Error("Orbit alcanzó el límite de acciones de voz.");
+                if (call.id && cancelledCalls.has(call.id)) continue;
                 const name = call.name ?? "";
-                const result = allowed.has(name)
-                    ? await options.execute(name, call.args ?? {})
-                    : "Herramienta no disponible.";
+                if (!allowed.has(name) || !budget.consume()) {
+                    const result = allowed.has(name) ? "Se agotó el presupuesto de acciones." : "Herramienta no disponible.";
+                    responses.push({ id: call.id, name, response: { result } });
+                    continue;
+                }
+                const controller = new AbortController();
+                const callSignal = AbortSignal.any([signal, controller.signal]);
+                if (call.id) activeCalls.set(call.id, controller);
+                let result: string;
+                try {
+                    result = await options.execute(name, call.args ?? {}, callSignal);
+                    callSignal.throwIfAborted();
+                } catch (error) {
+                    if (controller.signal.aborted && !signal.aborted) continue;
+                    throw error;
+                } finally {
+                    if (call.id) activeCalls.delete(call.id);
+                }
                 responses.push({ id: call.id, name, response: { result: boundToolResult(result) } });
             }
             signal.throwIfAborted();
-            session?.sendToolResponse({ functionResponses: responses });
+            const pending = responses.filter(response => !response.id || !cancelledCalls.has(response.id));
+            if (pending.length) session?.sendToolResponse({ functionResponses: pending });
         }
         if (content?.turnComplete) resolveTurn();
     };
@@ -85,7 +105,14 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
             tools: options.tools.length ? [{ functionDeclarations: options.tools }] : undefined,
         },
         callbacks: {
-            onmessage: message => { void receive(message).catch(rejectTurn); },
+            onmessage: message => {
+                for (const id of message.toolCallCancellation?.ids ?? []) {
+                    cancelledCalls.add(id);
+                    activeCalls.get(id)?.abort();
+                }
+                pendingMessages = pendingMessages.then(() => receive(message));
+                void pendingMessages.catch(rejectTurn);
+            },
             onerror: () => rejectTurn(new Error("Gemini Live no pudo continuar la sesión de voz.")),
             onclose: () => rejectTurn(new Error("Gemini Live cerró la sesión de voz.")),
         },
@@ -107,6 +134,7 @@ export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: strin
     } finally {
         finished = true;
         signal.removeEventListener("abort", abort);
+        sessionAbort.abort();
         session?.close();
     }
 }

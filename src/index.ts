@@ -176,20 +176,22 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
             data,
             systemPrompt: systemPrompt + "\n\nContexto previo de esta conversación\n" + conversation,
             signal: deadline,
-            tools: toolRegistry.toGeminiDeclarations(getConfig().toolProfile),
+            tools: policyEngine.filterTools(toolRegistry.getByProfile(getConfig().toolProfile)).map(tool => ({
+                name: tool.id, description: tool.description, parameters: tool.parameters,
+            })),
             onAudio: (pcm, sampleRate) => send({ type: "voice_audio", pcm, sampleRate }),
             onUsage: updateTokenUsage,
-            execute: async (name, args) => {
+            execute: async (name, args, toolSignal) => {
                 send({ type: "tool_call", tool: name, args: {} });
                 send({ type: "typing", state: "executing", tool: name });
                 try {
-                    const output = await runInLane(sessionId, () => executeTool(name, args, deadline), deadline, name);
+                    const output = await runInLane(sessionId, () => executeTool(name, args, toolSignal), toolSignal, name);
                     send({ type: "tool_result", tool: name, result: output.slice(0, 1500) });
                     return output;
                 } catch (error) {
-                    deadline.throwIfAborted();
-                    const output = error instanceof Error ? error.message : String(error);
+                    const output = toolSignal.aborted ? "Acción cancelada." : error instanceof Error ? error.message : String(error);
                     send({ type: "tool_result", tool: name, error: true, result: output.slice(0, 1500) });
+                    toolSignal.throwIfAborted();
                     return "Error: " + output;
                 }
             },
