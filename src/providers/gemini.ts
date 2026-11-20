@@ -12,12 +12,16 @@ export class GeminiProvider implements LLMProvider {
     readonly id   = "gemini";
     readonly name = "Google Gemini";
     private ai: GoogleGenAI | null = null;
+    private previousKey = "";
+    private previousUrl = "";
 
     private getClient(): GoogleGenAI {
-        if (!this.ai) {
-            const apiKey = getConfig().providers.gemini.apiKey;
-            if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
-            this.ai = new GoogleGenAI({ apiKey });
+        const { apiKey, baseUrl } = getConfig().providers.gemini;
+        if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
+        if (!this.ai || this.previousKey !== apiKey || this.previousUrl !== baseUrl) {
+            this.ai = new GoogleGenAI({ apiKey, httpOptions: baseUrl ? { baseUrl } : undefined });
+            this.previousKey = apiKey;
+            this.previousUrl = baseUrl;
         }
         return this.ai;
     }
@@ -42,6 +46,7 @@ export class GeminiProvider implements LLMProvider {
             model,
             contents,
             config: {
+                abortSignal: params.signal,
                 ...(params.systemPrompt
                     ? { systemInstruction: { parts: [{ text: params.systemPrompt }] } }
                     : {}),

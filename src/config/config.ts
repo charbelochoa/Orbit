@@ -51,6 +51,16 @@ function mergeEnvVars(raw: any): void {
         GEMINI_API_KEY:    ["providers", "gemini", "apiKey"],
         OPENAI_API_KEY:    ["providers", "openai", "apiKey"],
         ANTHROPIC_API_KEY: ["providers", "anthropic", "apiKey"],
+        ORBIT_PROVIDER:    ["defaultProvider"],
+        GEMINI_MODEL:      ["providers", "gemini", "models", "fast"],
+        GEMINI_LIVE_MODEL: ["providers", "gemini", "models", "live"],
+        OPENAI_MODEL:      ["providers", "openai", "models", "default"],
+        ANTHROPIC_MODEL:   ["providers", "anthropic", "models", "default"],
+        OLLAMA_MODEL:      ["providers", "ollama", "models", "default"],
+        GEMINI_BASE_URL:   ["providers", "gemini", "baseUrl"],
+        OPENAI_BASE_URL:   ["providers", "openai", "baseUrl"],
+        ANTHROPIC_BASE_URL: ["providers", "anthropic", "baseUrl"],
+        OLLAMA_BASE_URL:   ["providers", "ollama", "baseUrl"],
     };
     for (const [envKey, path] of Object.entries(envMap)) {
         const val = process.env[envKey];
@@ -60,9 +70,7 @@ function mergeEnvVars(raw: any): void {
             if (!obj[path[i]]) obj[path[i]] = {};
             obj = obj[path[i]];
         }
-        if (!obj[path[path.length - 1]]) {
-            obj[path[path.length - 1]] = val;
-        }
+        obj[path[path.length - 1]] = val;
     }
 }
 

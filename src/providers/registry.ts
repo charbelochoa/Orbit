@@ -102,15 +102,24 @@ class ProviderRegistryClass {
      */
     async generateText(params: TextGenerationParams): Promise<TextGenerationResult> {
         const config = getConfig();
-        const chain = config.fallbackChain.length > 0
-            ? config.fallbackChain
-            : [{ provider: config.defaultProvider, model: "" }];
+        const primary = this._activeProviderId || config.defaultProvider;
+        const chain = [
+            { provider: primary, model: "" },
+            ...config.fallbackChain,
+            ...this.getAvailable().map(provider => ({ provider: provider.id, model: "" })),
+        ];
+        const attempted = new Set<string>();
 
         let lastError: Error | null = null;
 
         for (const link of chain) {
+            params.signal?.throwIfAborted();
             const provider = this.providers.get(link.provider);
             if (!provider?.isAvailable()) continue;
+            const effectiveModel = (link.provider === primary ? params.model : undefined) || link.model || undefined;
+            const candidate = `${link.provider}:${effectiveModel ?? ""}`;
+            if (attempted.has(candidate)) continue;
+            attempted.add(candidate);
 
             // Phase 8.2: Skip provider if in cooldown
             if (!this.isHealthy(link.provider)) {
@@ -122,14 +131,15 @@ class ProviderRegistryClass {
 
             try {
                 const startMs = Date.now();
-                const effectiveModel = params.model || link.model || undefined;
                 const result = await provider.generateText({ ...params, model: effectiveModel });
+                params.signal?.throwIfAborted();
                 const elapsed = Date.now() - startMs;
 
                 // Update health stats
                 this.recordSuccess(link.provider, elapsed, result.usage);
                 return result;
             } catch (e: any) {
+                params.signal?.throwIfAborted();
                 lastError = e;
                 this.recordError(link.provider, e);
                 log.warn(`${link.provider} failed: ${e.message}. Trying next...`);
@@ -149,6 +159,7 @@ class ProviderRegistryClass {
         let lastError: Error | null = null;
 
         for (const providerId of preferredOrder) {
+            params.signal?.throwIfAborted();
             if (!this.isHealthy(providerId)) continue;
 
             const provider = this.providers.get(providerId);
@@ -160,6 +171,7 @@ class ProviderRegistryClass {
                 this.recordSuccess(providerId, Date.now() - startMs, result.usage);
                 return result;
             } catch (e: any) {
+                params.signal?.throwIfAborted();
                 lastError = e;
                 this.recordError(providerId, e);
                 log.warn(`Smart routing: ${providerId} failed (${hint}). Trying next...`);

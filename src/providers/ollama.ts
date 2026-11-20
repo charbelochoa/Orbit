@@ -29,13 +29,15 @@ export class OllamaProvider implements LLMProvider {
             messages.push({ role: m.role, content: m.content });
         }
 
-        const body: any = { model, messages, stream: false };
-        if (params.temperature !== undefined) {
-            body.options = { temperature: params.temperature };
-        }
+        const body = {
+            model, messages, stream: false,
+            format: params.responseFormat === "json" ? "json" : undefined,
+            options: { temperature: params.temperature, num_predict: params.maxTokens },
+        };
 
         const res = await fetch(`${baseUrl}/api/chat`, {
             method: "POST",
+            signal: params.signal,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
         });
@@ -50,6 +52,7 @@ export class OllamaProvider implements LLMProvider {
             text:     data.message?.content || "",
             provider: this.id,
             model,
+            usage: { inputTokens: data.prompt_eval_count ?? 0, outputTokens: data.eval_count ?? 0 },
         };
     }
 

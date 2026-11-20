@@ -12,6 +12,7 @@ export interface TextGenerationParams {
     temperature?:   number;
     maxTokens?:     number;
     responseFormat?: "text" | "json";
+    signal?: AbortSignal;
 }
 
 export interface ChatMessage {

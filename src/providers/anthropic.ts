@@ -33,8 +33,10 @@ export class AnthropicProvider implements LLMProvider {
         if (params.systemPrompt) body.system = params.systemPrompt;
         if (params.temperature !== undefined) body.temperature = params.temperature;
 
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
+        const baseUrl = cfg.providers.anthropic.baseUrl || "https://api.anthropic.com/v1";
+        const res = await fetch(`${baseUrl}/messages`, {
             method: "POST",
+            signal: params.signal,
             headers: {
                 "Content-Type":     "application/json",
                 "x-api-key":        apiKey,
@@ -51,7 +53,8 @@ export class AnthropicProvider implements LLMProvider {
 
         const data: any = await res.json();
         return {
-            text: data.content?.[0]?.text || "",
+            text: (data.content || []).filter((block: { type: string }) => block.type === "text")
+                .map((block: { text: string }) => block.text).join(""),
             usage: data.usage ? {
                 inputTokens:  data.usage.input_tokens,
                 outputTokens: data.usage.output_tokens,
