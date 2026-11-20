@@ -4,7 +4,8 @@ import { fileURLToPath } from "url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync } from "./memory/memory-manager.js";
-import { addMessage, getHistory } from "./memory/chat-history.js";
+import { getHistory, saveChatTurn } from "./memory/chat-history.js";
+import { workspaceRoot } from "./core/workspace.js";
 import { startGateway, stopGateway, broadcast, updateTokenUsage, onElectronConnected, type ChatTurn, type VoiceTurn } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
 import { toolRegistry } from "./core/registry.js";
@@ -146,8 +147,7 @@ async function chat({ text, sessionId, send, signal }: ChatTurn) {
             onUsage: updateTokenUsage,
         });
         const reply = fenceRecalledContext(rawReply) || "No pude componer la respuesta.";
-        addMessage(sessionId, "user", text);
-        addMessage(sessionId, "assistant", reply);
+        saveChatTurn(sessionId, workspaceRoot(), text, reply);
         send({ type: "orbit_message", text: reply });
         success = true;
         void maybeUpdateMemoryAsync(text).catch(() => {});
@@ -203,14 +203,13 @@ async function voice({ data, sessionId, send, signal }: VoiceTurn) {
                 }
             },
         });
+        const reply = fenceRecalledContext(result.assistant);
+        saveChatTurn(sessionId, workspaceRoot(), result.user, reply);
         if (result.user) {
-            addMessage(sessionId, "user", result.user);
             send({ type: "user_message", text: result.user });
             wakeWordMonitor.check(result.user);
         }
-        const reply = fenceRecalledContext(result.assistant);
         if (reply) {
-            addMessage(sessionId, "assistant", reply);
             send({ type: "orbit_message", text: reply });
             if (result.user) void maybeUpdateMemoryAsync(result.user).catch(() => {});
         }

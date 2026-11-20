@@ -11,7 +11,8 @@ import { runInLane } from "../agent/lanes.js";
 import { getToolFailure, OrbitToolError } from "../core/orbit-error.js";
 import { getConfig } from "../config/config.js";
 import { toolRegistry } from "../core/registry.js";
-import { clearHistory } from "../memory/chat-history.js";
+import { clearHistory, getChatWorkspace, listChatConversations, readChatConversation } from "../memory/chat-history.js";
+import { chatSessionId, isConversationId } from "../core/conversations.js";
 import { providerRegistry } from "../providers/registry.js";
 import { withProviderSelection } from "../providers/selection.js";
 import { resolveWorkspace, withWorkspace, workspaceRoot } from "../core/workspace.js";
@@ -83,9 +84,11 @@ async function runClientTurn(
 }
 
 function sessionKey(client: Client, id: unknown): string {
-    const conversation = typeof id === "string" && /^[\w-]{1,100}$/.test(id) ? id : client.id;
-    return `chat:${conversation}`;
+    return chatSessionId(isConversationId(id) ? id : client.id);
 }
+
+const historyCommands = new Set(["history_list", "history_get", "history_delete"]);
+const conversationCommands = new Set(["chat", "audio", "audio_start"]);
 
 const clients = new Map<string, Client>();
 
@@ -249,7 +252,10 @@ export async function startGateway(
 
                 let workspace: string;
                 try {
-                    workspace = await resolveWorkspace(msg.payload?.workspace);
+                    const conversation = msg.payload?.conversationId;
+                    const requested = msg.payload?.workspace ?? (conversationCommands.has(msg.type) && isConversationId(conversation)
+                        ? getChatWorkspace(conversation) : undefined);
+                    workspace = historyCommands.has(msg.type) ? workspaceRoot() : await resolveWorkspace(requested);
                 } catch (error) {
                     ws.send(JSON.stringify({ type: "error", message: (error as Error).message }));
                     return;
@@ -421,11 +427,25 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             break;
         }
 
+        case "history_list": {
+            client.ws.send(JSON.stringify({ type: "history_index", conversations: listChatConversations() }));
+            break;
+        }
+
+        case "history_get": {
+            const id = payload?.conversationId;
+            if (!isConversationId(id)) break;
+            client.ws.send(JSON.stringify({ type: "history_snapshot", ...readChatConversation(id) }));
+            break;
+        }
+
         case "history_delete": {
             const id = payload?.conversationId;
-            if (typeof id === "string" && /^conv_[\w-]{1,95}$/.test(id)) {
-                const sessionId = `chat:${id}`;
-                await sessionTurns.enqueue(sessionId, async () => { clearHistory(sessionId); });
+            if (!isConversationId(id)) break;
+            const sessionId = chatSessionId(id);
+            await sessionTurns.enqueue(sessionId, async () => { clearHistory(sessionId); });
+            if (client.ws.readyState === WebSocket.OPEN) {
+                client.ws.send(JSON.stringify({ type: "history_deleted", conversationId: id }));
             }
             break;
         }
