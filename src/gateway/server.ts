@@ -261,8 +261,11 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 break;
             }
             if (isCommand(text)) {
-                if (text.toLowerCase() === "/clear" && !client.turn) clearHistory(sessionKey(client, payload?.conversationId));
-                await dispatchCommand(text, clientId, client.ws, speakFn);
+                await runClientTurn(client, payload?.conversationId, async ({ sessionId, signal, send }) => {
+                    if (text.toLowerCase() === "/clear") clearHistory(sessionId);
+                    await dispatchCommand(text, clientId, client.ws, speakFn, signal);
+                    send({ type: "turn_complete" });
+                });
                 break;
             }
             const provider = typeof payload?.provider === "string" ? payload.provider : undefined;

@@ -51,6 +51,7 @@ export async function dispatchCommand(
     clientId: string,
     ws:       WebSocket,
     speakFn?: (text: string) => void,
+    signal?: AbortSignal,
 ): Promise<boolean> {
     const parsed = parseCommand(text);
     if (!parsed) return false;
@@ -72,6 +73,7 @@ export async function dispatchCommand(
         args:       parsed.args,
         subcommand: parsed.subcommand,
         argStr:     parsed.argStr,
+        signal,
     };
 
     setTypingState("thinking");
@@ -88,7 +90,7 @@ export async function dispatchCommand(
         log.error(`Error en comando /${parsed.name}:`, e.message);
         ws.send(JSON.stringify({
             type:    "command_error",
-            message: `Error ejecutando /${parsed.name}: ${e.message}`,
+            message: signal?.aborted ? "Comando cancelado." : `Error ejecutando /${parsed.name}: ${e.message}`,
         }));
     } finally {
         setTypingState("idle");

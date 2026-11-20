@@ -14,6 +14,7 @@ export interface CommandContext {
     sendReply:  (msg: Record<string, unknown>) => void;
     /** Optional speak function that routes text to Gemini Live */
     speakFn?:   (text: string) => void;
+    signal?:    AbortSignal;
     /** Original raw text received (including the leading /) */
     rawText:    string;
     /** Words after the command name, e.g. ["search", "query"] */

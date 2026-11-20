@@ -36,10 +36,18 @@ import { notifyCommand }      from "./commands/notify.js";
 import { codebaseCommand }    from "./commands/codebase.js";
 import { batchCommand }       from "./commands/batch.js";
 import { crawlCommand }       from "./commands/crawl.js";
+import { claudeCommand }      from "./commands/claude.js";
 import { resetTokenUsage }    from "../gateway/server.js";
 import type { CommandContext } from "./types.js";
 
 export function initAutoReply(): void {
+    commandRegistry.register({
+        name: "claude",
+        description: "Delega trabajo a tu instalación de Claude Code",
+        usage: "/claude [--edit] <solicitud>",
+        handler: claudeCommand,
+    });
+
     commandRegistry.register({
         name:        "init",
         description: "Analiza el proyecto y genera ORBIT.md con contexto",

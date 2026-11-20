@@ -168,6 +168,7 @@ function renderToolEnd(name: string, ok: boolean, duration?: number): string {
 const SLASH_COMMANDS: { cmd: string; desc: string }[] = [
   { cmd: "/init",    desc: "Genera ORBIT.md con contexto del proyecto" },
   { cmd: "/task",    desc: "Ejecuta una tarea autónoma" },
+  { cmd: "/claude",  desc: "Usa tu instalación de Claude Code" },
   { cmd: "/stop",    desc: "Detiene la generación actual" },
   { cmd: "/clear",   desc: "Limpia el chat" },
   { cmd: "/memory",  desc: "Muestra la memoria" },
