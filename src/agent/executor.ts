@@ -62,7 +62,8 @@ export class AgentExecutor {
         const signal = this.dispatchSignal;
         const taskId = this.sessionId;
         signal.throwIfAborted();
-        let checkpoint: TaskCheckpoint = journal?.checkpoint ?? {
+        const savedPlan = journal?.checkpoint?.steps.length ? journal.checkpoint : undefined;
+        let checkpoint: TaskCheckpoint = savedPlan ?? {
             steps: (await createPlan(goal, {
                 ...this.planOptions,
                 signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
@@ -73,7 +74,7 @@ export class AgentExecutor {
         if (Object.values(checkpoint.states).some(entry => entry?.state === "running")) {
             throw new Error("Confirma el reintento de los pasos interrumpidos para continuar.");
         }
-        if (!journal?.checkpoint) journal?.save(checkpoint);
+        if (!savedPlan) journal?.save(checkpoint);
 
         const { steps } = checkpoint;
         const remaining = new Map(steps.map(step => [step.step, step]));

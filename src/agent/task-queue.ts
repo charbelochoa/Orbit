@@ -4,7 +4,7 @@ import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 import { withWorkspace, workspaceRoot } from "../core/workspace.js";
 import { TaskStore } from "./task-store.js";
-import { summarizeTaskSteps, type TaskCheckpoint } from "./task-checkpoint.js";
+import { PLANNING_CHECKPOINT, summarizeTaskSteps, type TaskCheckpoint } from "./task-checkpoint.js";
 import { providerRegistry } from "../providers/registry.js";
 import { withProviderSelection, type ProviderSelection } from "../providers/selection.js";
 import { withConfigSnapshot } from "../config/config.js";
@@ -167,7 +167,9 @@ class TaskQueue {
                     broadcast({ type: "task_failed", id, error });
                     continue;
                 }
-                this.update(task, { status: "running", startedAt: new Date() });
+                this.update(task, {
+                    status: "running", startedAt: new Date(), checkpoint: task.checkpoint ?? PLANNING_CHECKPOINT,
+                });
             } catch (error) {
                 this.enqueue(task);
                 log.error("Orbit no pudo persistir el inicio de la tarea.", error);
@@ -225,7 +227,7 @@ class TaskQueue {
 
     private markStopped(task: Task): void {
         if (task.status !== "running" && task.status !== "paused") return;
-        if (task.checkpoint) {
+        if (task.checkpoint?.steps.length) {
             const error = "Orbit se cerró durante la tarea. Puedes continuar desde el progreso guardado.";
             this.update(task, { status: "interrupted", error, endedAt: new Date() });
             broadcast({ type: "task_interrupted", id: task.id, error });

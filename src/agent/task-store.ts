@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { APP_DATA } from "../config/paths.js";
 import type { Task } from "./task-queue.js";
 import { inTransaction } from "../memory/sqlite.js";
+import { PLANNING_CHECKPOINT } from "./task-checkpoint.js";
 
 type TaskRow = Pick<Task, "id" | "goal" | "workspace" | "priority" | "status"> & {
     created_at: number;
@@ -56,11 +57,17 @@ export class TaskStore {
     }
 
     recover(): Task[] {
-        this.database.prepare(`
-            UPDATE tasks SET status = CASE WHEN checkpoint IS NULL THEN 'failed' ELSE 'interrupted' END,
-                ended_at = ?, error = ?
-            WHERE status IN ('running', 'paused')
-        `).run(Date.now(), "Orbit se cerró durante la ejecución. Revisa el progreso antes de reintentar.");
+        inTransaction(this.database, () => {
+            this.database.prepare(`
+                UPDATE tasks SET status = 'pending', started_at = NULL, ended_at = NULL, error = NULL
+                WHERE status IN ('running', 'paused') AND checkpoint = ?
+            `).run(JSON.stringify(PLANNING_CHECKPOINT));
+            this.database.prepare(`
+                UPDATE tasks SET status = CASE WHEN checkpoint IS NULL THEN 'failed' ELSE 'interrupted' END,
+                    ended_at = ?, error = ?
+                WHERE status IN ('running', 'paused')
+            `).run(Date.now(), "Orbit se cerró durante la ejecución. Revisa el progreso antes de reintentar.");
+        });
         const rows = this.database.prepare("SELECT * FROM tasks ORDER BY created_at, id").all() as unknown as TaskRow[];
         return rows.map(row => ({
             id: row.id,

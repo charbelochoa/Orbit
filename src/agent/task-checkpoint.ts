@@ -9,6 +9,8 @@ export interface TaskCheckpoint {
     states: Partial<Record<number, TaskStepState>>;
 }
 
+export const PLANNING_CHECKPOINT: TaskCheckpoint = { steps: [], states: {} };
+
 export function summarizeTaskSteps(checkpoint?: TaskCheckpoint) {
     return checkpoint?.steps.map(({ step, tool, description }) => {
         const entry = checkpoint.states[step];
