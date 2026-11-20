@@ -43,7 +43,9 @@ async function mountProviderForm() {
         useByDefault: useByDefault.checked,
       });
       paint();
-      message.textContent = 'Guardado. Sal de Orbit desde la bandeja y vuelve a abrirlo para aplicar los cambios.';
+      message.textContent = settings.applied
+        ? 'Guardado y aplicado a los próximos turnos.'
+        : 'Guardado. El agente leerá estos ajustes en su próximo arranque.';
     } catch (error) {
       message.textContent = error.message || 'No se pudo guardar la configuración.';
     } finally {

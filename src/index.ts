@@ -14,7 +14,7 @@ import { getToolFailure } from "./core/orbit-error.js";
 import { runVoiceTurn } from "./core/voice.js";
 import { executeTool } from "./actions/index.js";
 import { stopDesktopInput } from "./actions/ps-bridge.js";
-import { loadConfig, getConfig } from "./config/config.js";
+import { loadConfig, getConfig, replaceDesktopProviderSettings } from "./config/config.js";
 import { setLogLevel } from "./infra/logger.js";
 import { createLogger } from "./infra/logger.js";
 import { providerRegistry } from "./providers/registry.js";
@@ -271,7 +271,25 @@ async function main() {
     process.on("SIGTERM", stop);
     if (process.connected) process.on("disconnect", stop);
     process.on("message", message => {
-        if (message && typeof message === "object" && "type" in message && message.type === "orbit-stop") void stop();
+        if (!message || typeof message !== "object" || !("type" in message)) return;
+        if (message.type === "orbit-stop") {
+            void stop();
+            return;
+        }
+        if (closing || message.type !== "orbit-provider-settings" || !("id" in message) || typeof message.id !== "string") return;
+
+        let applied = false;
+        try {
+            const previous = loadConfig();
+            const current = replaceDesktopProviderSettings("settings" in message ? message.settings : undefined);
+            providerRegistry.applySettings(previous, current, "resetDefault" in message && message.resetDefault === true);
+            const info = providerRegistry.getActiveInfo();
+            broadcast({ type: "provider_configured", provider: info.id, name: info.name, model: info.model, gemini: Boolean(current.providers.gemini.apiKey) });
+            applied = true;
+        } catch {
+            log.warn("El agente no pudo aplicar los ajustes de proveedores.");
+        }
+        if (process.connected) process.send?.({ type: "orbit-provider-settings-ack", id: message.id, applied }, () => {});
     });
 
     console.log(`

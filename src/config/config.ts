@@ -69,9 +69,9 @@ function _notifyRefresh(config: OrbitConfig): void {
 }
 
 /** Recursively replace ${VAR} placeholders with process.env values */
-function resolveEnvVars(obj: any, env: Record<string, string | undefined>): any {
+function resolveEnvVars(obj: any, env: (key: string) => string | undefined): any {
     if (typeof obj === "string") {
-        return obj.replace(/\$\{(\w+)\}/g, (_, key) => env[key] || "");
+        return obj.replace(/\$\{(\w+)\}/g, (_, key) => env(key) || "");
     }
     if (Array.isArray(obj)) return obj.map(value => resolveEnvVars(value, env));
     if (obj && typeof obj === "object") {
@@ -83,9 +83,9 @@ function resolveEnvVars(obj: any, env: Record<string, string | undefined>): any 
 }
 
 /** Merge well-known env vars into raw config for backward compat with .env */
-function mergeEnvVars(raw: any, env: Record<string, string | undefined>): void {
+function mergeEnvVars(raw: any, env: (key: string) => string | undefined): void {
     for (const [envKey, path] of Object.entries(providerEnvPaths)) {
-        const val = env[envKey];
+        const val = env(envKey);
         if (!val) continue;
         let obj = raw;
         for (let i = 0; i < path.length - 1; i++) {
@@ -113,7 +113,10 @@ function readConfigSource(configPath?: string): unknown {
 }
 
 function resolveConfig(source: unknown, settings: Record<string, string>): OrbitConfig {
-    const env = { ...process.env, ...settings };
+    const env = (key: string) => {
+        const settingKey = process.platform === "win32" ? key.toUpperCase() : key;
+        return Object.hasOwn(settings, settingKey) ? settings[settingKey] : process.env[key];
+    };
     const raw = resolveEnvVars(source, env);
     mergeEnvVars(raw, env);
     return orbitConfigSchema.parse(raw);

@@ -69,6 +69,7 @@ function saveProvider(home, input) {
   }
   settings.profiles[name] = profile;
   if (input.useByDefault) settings.defaultProvider = name;
+  else if (settings.defaultProvider === name) settings.defaultProvider = "";
 
   writeLocalJson(settingsPath(home), settings);
   return publicSettings(home);

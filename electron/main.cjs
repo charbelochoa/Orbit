@@ -2,6 +2,7 @@
 
 const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, screen, globalShortcut, clipboard, dialog } = require("electron");
 const { spawn, execSync } = require("child_process");
+const { randomUUID } = require("node:crypto");
 const path = require("path");
 const fs = require("fs");
 const { publicSettings, saveProvider, providerEnvironment } = require("./provider-settings.cjs");
@@ -61,6 +62,31 @@ function orbitHome() {
   return path.resolve(process.env.ORBIT_HOME || (IS_PACKED ? app.getPath("userData") : ROOT));
 }
 
+function applyProviderSettings(child, settings, resetDefault = false) {
+  if (!child?.connected || isQuitting) return Promise.resolve(false);
+  const id = randomUUID();
+  return new Promise(resolve => {
+    const finish = applied => {
+      clearTimeout(timer);
+      child.off("message", acknowledge);
+      child.off("close", disconnected);
+      resolve(applied);
+    };
+    const acknowledge = message => {
+      if (message?.type === "orbit-provider-settings-ack" && message.id === id) finish(message.applied === true);
+    };
+    const disconnected = () => finish(false);
+    const timer = setTimeout(disconnected, 2500);
+    child.on("message", acknowledge);
+    child.once("close", disconnected);
+    try {
+      child.send({ type: "orbit-provider-settings", id, settings, resetDefault }, error => { if (error) disconnected(); });
+    } catch {
+      disconnected();
+    }
+  });
+}
+
 function startBackend() {
   const entry = path.join(ROOT, "dist", "index.js");
   if (!fs.existsSync(entry)) throw new Error("Falta la compilación del agente. Ejecuta npm run build.");
@@ -80,7 +106,7 @@ function startBackend() {
     cwd: workspace,
     env: {
       ...process.env,
-      ...settingsEnv,
+      ORBIT_DESKTOP_PROVIDER_OVERRIDES: JSON.stringify(settingsEnv),
       ORBIT_HOME: home,
       ...(configPath ? { ORBIT_CONFIG: configPath } : {}),
       ORBIT_ENGINE_DIR: IS_PACKED ? path.join(process.resourcesPath, "engine") : path.join(ROOT, "engine"),
@@ -113,6 +139,12 @@ function startBackend() {
         });
       } catch (error) {
         warn("No se pudo publicar el puerto para la terminal: " + error.message);
+      }
+      try {
+        const latest = providerEnvironment(home, warn);
+        if (JSON.stringify(latest) !== JSON.stringify(settingsEnv)) void applyProviderSettings(child, latest);
+      } catch (error) {
+        warn(error.message);
       }
       resolve();
     });
@@ -198,9 +230,12 @@ ipcMain.handle("orbit:provider-settings", event => {
   return publicSettings(orbitHome());
 });
 
-ipcMain.handle("orbit:save-provider", (event, input) => {
+ipcMain.handle("orbit:save-provider", async (event, input) => {
   requireOrbitWindow(event);
-  return saveProvider(orbitHome(), input);
+  const home = orbitHome();
+  const saved = saveProvider(home, input);
+  const applied = backendReady && await applyProviderSettings(backend, providerEnvironment(home, warn), input.useByDefault === true);
+  return { ...saved, applied };
 });
 
 ipcMain.handle("orbit:select-workspace", async (event, defaultPath) => {

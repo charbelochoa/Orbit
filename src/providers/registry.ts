@@ -4,7 +4,8 @@
  * Phase 8.2 — Smart routing, rate-limit cooldown, health tracking.
  */
 
-import { getConfig } from "../config/config.js";
+import { getConfig, loadConfig } from "../config/config.js";
+import type { OrbitConfig } from "../config/schema.js";
 import { createLogger } from "../infra/logger.js";
 import { GeminiProvider } from "./gemini.js";
 import { OpenAIProvider } from "./openai.js";
@@ -16,6 +17,14 @@ import { isToolProtocolRejection } from "./tool-adapter.js";
 import { currentProviderSelection, type ProviderSelection } from "./selection.js";
 
 const log = createLogger("Providers");
+
+type BuiltinProvider = keyof OrbitConfig["providers"];
+type ProviderProfile = OrbitConfig["providers"][BuiltinProvider];
+
+function sameProviderProfile(left?: ProviderProfile, right?: ProviderProfile): boolean {
+    return left === right || Boolean(left && right && left.apiKey === right.apiKey && left.baseUrl === right.baseUrl &&
+        JSON.stringify(left.models) === JSON.stringify(right.models));
+}
 
 // ── Phase 8.2: Provider Health Tracking ──────────────────────────────────────
 
@@ -78,8 +87,26 @@ class ProviderRegistryClass {
         const p = this.providers.get(id);
         if (!p?.isAvailable()) return false;
         const h = this.health.get(id);
-        if (h && h.cooldownUntil > Date.now()) return false;
+        if (h && h.cooldownUntil > Date.now() && this.usesCurrentProfile(id)) return false;
         return true;
+    }
+
+    private usesCurrentProfile(id: string): boolean {
+        const key = id as BuiltinProvider;
+        return sameProviderProfile(getConfig().providers[key], loadConfig().providers[key]);
+    }
+
+    applySettings(previous: OrbitConfig, current: OrbitConfig, resetDefault: boolean): void {
+        if (resetDefault || previous.defaultProvider !== current.defaultProvider) this._activeProviderId = null;
+        for (const id of Object.keys(current.providers) as BuiltinProvider[]) {
+            if (sameProviderProfile(previous.providers[id], current.providers[id])) continue;
+            const health = this.health.get(id);
+            if (!health) continue;
+            health.cooldownUntil = 0;
+            health.consecutiveRateLimits = 0;
+            health.lastError = undefined;
+            health.lastErrorAt = undefined;
+        }
     }
 
     getDefault(): LLMProvider {
@@ -218,7 +245,7 @@ class ProviderRegistryClass {
         const h = this.health.get(id);
         if (!h) return;
         h.totalCalls++;
-        if (h.cooldownUntil <= Date.now()) {
+        if (h.cooldownUntil <= Date.now() && this.usesCurrentProfile(id)) {
             h.consecutiveRateLimits = 0;
             h.cooldownUntil = 0;
         }
@@ -233,6 +260,7 @@ class ProviderRegistryClass {
         const h = this.health.get(id);
         if (!h) return;
         h.totalErrors++;
+        if (!this.usesCurrentProfile(id)) return;
         h.lastError   = error.message.slice(0, 200);
         h.lastErrorAt = Date.now();
 

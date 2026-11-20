@@ -644,6 +644,10 @@ class OrbitCLI {
         break;
       }
 
+      case "provider_configured":
+        if (!this.preferredProvider) this.model = msg.model || msg.provider || this.model;
+        break;
+
       case "command_result": {
         this.spinner.stop();
         this.finishStream();
