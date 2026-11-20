@@ -54,6 +54,17 @@ export function parseToolArguments(value: unknown): Record<string, unknown> | un
     return isRecord(value) ? value : undefined;
 }
 
+export function readFunctionCalls(entries: unknown): ProviderToolCall[] {
+    if (!Array.isArray(entries)) return [];
+    return entries.flatMap(entry => {
+        if (!isRecord(entry) || !isRecord(entry.function)) return [];
+        const { name, arguments: args } = entry.function;
+        if (typeof name !== "string") return [];
+        const id = typeof entry.id === "string" || typeof entry.id === "number" ? String(entry.id) : undefined;
+        return [{ id, name, arguments: args }];
+    });
+}
+
 export function normalizeToolCalls(calls: ProviderToolCall[], history: ToolExchange[]) {
     const seen = new Set(history.flatMap(exchange => exchange.outcomes.map(outcome => outcome.call.id)));
     return calls.map((call, index) => {

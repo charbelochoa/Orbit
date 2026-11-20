@@ -6,6 +6,7 @@
 import { getConfig } from "../config/config.js";
 import type { LLMProvider, TextGenerationParams, TextGenerationResult } from "./types.js";
 import { ProviderHttpError } from "./retry.js";
+import { parseToolArguments, readFunctionCalls, toOpenAITools } from "./tool-adapter.js";
 
 export class OpenAIProvider implements LLMProvider {
     readonly id   = "openai";
@@ -38,7 +39,27 @@ export class OpenAIProvider implements LLMProvider {
             ];
         }
 
+        const toolContext = params.toolContext;
+        for (const exchange of toolContext?.exchanges ?? []) {
+            messages.push({
+                role: "assistant",
+                content: exchange.text || null,
+                tool_calls: exchange.outcomes.map(({ call }) => ({
+                    id: call.id,
+                    type: "function",
+                    function: { name: call.name, arguments: JSON.stringify(parseToolArguments(call.arguments) ?? {}) },
+                })),
+            });
+            for (const { call, output } of exchange.outcomes) {
+                messages.push({ role: "tool", tool_call_id: call.id, content: output });
+            }
+        }
+
         const body: any = { model, messages };
+        if (toolContext?.tools.length) {
+            body.tools = toOpenAITools(toolContext.tools);
+            body.tool_choice = toolContext.allowCalls ? "auto" : "none";
+        }
         if (params.temperature !== undefined) body.temperature = params.temperature;
         if (params.maxTokens) body.max_tokens = params.maxTokens;
         if (params.responseFormat === "json") body.response_format = { type: "json_object" };
@@ -58,8 +79,10 @@ export class OpenAIProvider implements LLMProvider {
         }
 
         const data: any = await res.json();
+        const message = data.choices?.[0]?.message;
         return {
-            text: data.choices?.[0]?.message?.content || "",
+            text: message?.content || "",
+            calls: toolContext ? readFunctionCalls(message?.tool_calls) : undefined,
             usage: data.usage ? {
                 inputTokens:  data.usage.prompt_tokens,
                 outputTokens: data.usage.completion_tokens,
