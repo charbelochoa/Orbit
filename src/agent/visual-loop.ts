@@ -12,11 +12,8 @@
  *   loop.stop();    // terminates cleanly
  */
 
-import screenshot from "screenshot-desktop";
-import os from "os";
-import path from "path";
-import fs from "fs/promises";
-import { generateText } from "../providers/registry.js";
+import { captureDesktopPng, pngDimensions } from "../actions/screenshot.js";
+import { analyzeImage } from "../providers/vision.js";
 import { createLogger } from "../infra/logger.js";
 import { broadcast } from "../gateway/server.js";
 import { getConfig } from "../config/config.js";
@@ -38,25 +35,13 @@ const log = createLogger("visual-loop");
 
 // ── Screenshot helpers ───────────────────────────────────────────────────────
 
-/** Read PNG dimensions from the IHDR chunk. */
-function getPngDimensions(buf: Buffer): { w: number; h: number } {
-    if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) {
-        return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
-    }
-    return { w: 0, h: 0 };
-}
-
 async function captureScreenshot(): Promise<{ base64: string; display: DisplayInfo }> {
-    const tempPath = path.join(os.tmpdir(), `orbit_vl_${Date.now()}.png`);
-    await screenshot({ filename: tempPath });
-    const buf = await fs.readFile(tempPath);
-    try { await fs.unlink(tempPath); } catch { /* ok */ }
-
-    const base64 = buf.toString("base64");
-    const dims = getPngDimensions(buf);
+    const buffer = await captureDesktopPng();
+    const base64 = buffer.toString("base64");
+    const dims = pngDimensions(buffer);
     const [logW, logH] = await getScreenSize();
-    const physW = dims.w || logW;
-    const physH = dims.h || logH;
+    const physW = dims.width || logW;
+    const physH = dims.height || logH;
 
     return {
         base64,
@@ -218,7 +203,7 @@ export class VisualAgentLoop {
                 // The provider registry's generateText only supports text messages,
                 // so we describe the visual context textually + pass screenshot ref.
                 // For actual multimodal, we use Gemini's inline data via a direct call fallback.
-                const vlmResponse = await this._callVLM(systemPrompt, messages, base64, display);
+                const vlmResponse = await this._callVLM(systemPrompt, messages, base64, display, opts?.signal);
 
                 // 3. Parse action
                 const action = parseVisualAction(vlmResponse);
@@ -340,96 +325,22 @@ export class VisualAgentLoop {
         };
     }
 
-    /**
-     * Call the VLM with screenshot. Uses Gemini multimodal directly if available,
-     * falls back to text-only description via generateText().
-     */
     private async _callVLM(
         systemPrompt: string,
         history: ChatMessage[],
         screenshotB64: string,
         display: DisplayInfo,
+        signal?: AbortSignal,
     ): Promise<string> {
-        // Try Gemini multimodal first (supports inline image data)
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (apiKey) {
-            try {
-                return await this._callGeminiVision(
-                    apiKey, systemPrompt, history, screenshotB64, display,
-                );
-            } catch (e: any) {
-                log.warn(`Gemini vision failed, falling back to text: ${e.message}`);
-            }
-        }
-
-        // Fallback: text-only — describe the screenshot request
-        const textMessages: ChatMessage[] = [
-            ...history,
-            {
-                role: "user",
-                content: `[A screenshot of the desktop (${display.logicalWidth}x${display.logicalHeight}) was taken. I cannot show it to you directly. Based on the task and previous actions, decide what to do next. If you need to see the screen, output: Action: wait()]`,
-            },
-        ];
-        const result = await generateText({
+        const size = display.logicalWidth + "x" + display.logicalHeight;
+        const request = "La imagen muestra la pantalla actual. Usa coordenadas de pantalla de " + size +
+            " píxeles lógicos. Describe lo que ves y decide el siguiente paso.";
+        return await analyzeImage({ mimeType: "image/png", data: screenshotB64 }, {
             systemPrompt,
-            messages: textMessages,
+            messages: [...history, { role: "user", content: request }],
             temperature: 0.2,
             maxTokens: 1000,
-        });
-        return result.text;
-    }
-
-    /**
-     * Call Gemini with vision (multimodal) using @google/genai directly.
-     */
-    private async _callGeminiVision(
-        apiKey: string,
-        systemPrompt: string,
-        history: ChatMessage[],
-        screenshotB64: string,
-        display: DisplayInfo,
-    ): Promise<string> {
-        const { GoogleGenAI } = await import("@google/genai");
-        const ai = new GoogleGenAI({ apiKey });
-
-        // Build contents array: system instruction + history + current screenshot
-        const contents: any[] = [];
-
-        // Convert history to Gemini format
-        for (const msg of history) {
-            if (msg.role === "system") continue; // handled via systemInstruction
-            contents.push({
-                role: msg.role === "assistant" ? "model" : "user",
-                parts: [{ text: msg.content }],
-            });
-        }
-
-        // Add current screenshot as the last user message
-        contents.push({
-            role: "user",
-            parts: [
-                {
-                    inlineData: {
-                        mimeType: "image/png",
-                        data: screenshotB64,
-                    },
-                },
-                {
-                    text: `This is a screenshot of the current screen (${display.logicalWidth}x${display.logicalHeight} logical pixels, ${display.physicalWidth}x${display.physicalHeight} physical). All coordinates in your Action must be in logical pixel space. What do you see and what should you do next?`,
-                },
-            ],
-        });
-
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            config: {
-                systemInstruction: systemPrompt,
-                temperature: 0.2,
-                maxOutputTokens: 1000,
-            },
-            contents,
-        });
-
-        return response.text || "Action: wait()";
+            signal,
+        }) || "Action: wait()";
     }
 }

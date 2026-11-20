@@ -111,7 +111,7 @@ case "cmd_control": result = await cmdControl(args, signal); break;
     //  ── File system ───────────────────────────────────────────────
 case "file_controller": result = await fileController(args); break;
     //  ── Screen vision (Gemini multimodal screenshot analysis) ─────
-case "screen_vision": case "screen_process": result = await screenVision(args); break;
+case "screen_vision": case "screen_process": result = await screenVision(args, signal); break;
     //  ── Visual Memory (Sprint 6) ──────────────────────────────────
 case "capture_screen_memory": result = await captureScreenMemory(args); break;
     //  ── RPA Recorder (Sprint 7) ───────────────────────────────
@@ -208,7 +208,7 @@ case "visual_task": {
         signal?.addEventListener("abort", stop, { once: true });
         try {
             signal?.throwIfAborted();
-            const loopResult = await loop.run(goal, { maxLoops: args?.maxLoops });
+            const loopResult = await loop.run(goal, { maxLoops: args?.maxLoops, signal });
             result = `[${loopResult.status}] (${loopResult.totalLoops} pasos, ${Math.round(loopResult.elapsedMs / 1000)}s) ${loopResult.summary}`;
         } finally {
             signal?.removeEventListener("abort", stop);

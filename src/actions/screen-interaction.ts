@@ -9,15 +9,9 @@
  * - Shared Bezier helpers from ps-bridge
  */
 
-import screenshot from "screenshot-desktop";
-import { GoogleGenAI } from "@google/genai";
-import dotenv from "dotenv";
-import os from "os";
-import path from "path";
-import fs from "fs/promises";
 import { runPS, getCursorPos, getScreenSize, buildBezierScript } from "./ps-bridge.js";
-
-dotenv.config();
+import { captureDesktopPng, pngDimensions } from "./screenshot.js";
+import { analyzeImage } from "../providers/vision.js";
 
 /**
  * Returns the DPI scale factor of the primary screen (e.g., 1.5 for 150%).
@@ -48,25 +42,6 @@ export async function getDisplayScaleFactor(): Promise<number> {
     return _scaleFactor;
 }
 
-async function captureScreen(): Promise<{ base64: string; path: string }> {
-    const tempPath = path.join(os.tmpdir(), `orbit_find_${Date.now()}.png`);
-    await screenshot({ filename: tempPath });
-    const buf = await fs.readFile(tempPath);
-    return { base64: buf.toString("base64"), path: tempPath };
-}
-
-/**
- * Read PNG dimensions from the IHDR chunk (bytes 16-23).
- */
-function getPngDimensions(buf: Buffer): { w: number; h: number } {
-    if (buf[0] === 0x89 && buf[1] === 0x50) {
-        const w = buf.readUInt32BE(16);
-        const h = buf.readUInt32BE(20);
-        return { w, h };
-    }
-    return { w: 0, h: 0 };
-}
-
 /**
  * Find element coordinates using Gemini Vision.
  * The image may have different pixel dimensions than the logical screen
@@ -75,24 +50,18 @@ function getPngDimensions(buf: Buffer): { w: number; h: number } {
  */
 async function findElementCoords(
     description: string,
-    screenshotB64: string,
+    screenshot: Buffer,
     screenW: number,
     screenH: number
 ): Promise<{ x: number; y: number; found: boolean }> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY no configurada");
-
-    const imgBuf = Buffer.from(screenshotB64, "base64");
-    const imgDim = getPngDimensions(imgBuf);
-    const imgW = imgDim.w || screenW;
-    const imgH = imgDim.h || screenH;
+    const dimensions = pngDimensions(screenshot);
+    const imgW = dimensions.width || screenW;
+    const imgH = dimensions.height || screenH;
 
     const scaleX = screenW / imgW;
     const scaleY = screenH / imgH;
 
     console.log(`[Screen Find] screen=${screenW}x${screenH} img=${imgW}x${imgH} scale=${scaleX.toFixed(2)},${scaleY.toFixed(2)}`);
-
-    const ai = new GoogleGenAI({ apiKey });
 
     const prompt = `You are a precise UI element locator. The image is a screenshot of a Windows desktop (${imgW}x${imgH} pixels).
 
@@ -110,26 +79,18 @@ Return ONLY two numbers separated by a comma: x,y
 Example: 450,320
 If the element is not visible anywhere on screen, return: 0,0`;
 
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{
-            role: "user",
-            parts: [
-                { inlineData: { mimeType: "image/png", data: screenshotB64 } },
-                { text: prompt }
-            ]
-        }]
+    const descriptionResult = await analyzeImage({ mimeType: "image/png", data: screenshot.toString("base64") }, {
+        messages: [{ role: "user", content: prompt }],
+        maxTokens: 160,
     });
-
-    const text = (response.text || "").trim();
-    console.log(`[Screen Find] Gemini response: "${text}"`);
-    const match = text.match(/(\d+)\s*,\s*(\d+)/);
+    const text = descriptionResult.trim();
+    const match = text.match(/^(\d+)\s*,\s*(\d+)$/);
     if (match) {
         const rawX = parseInt(match[1], 10);
         const rawY = parseInt(match[2], 10);
-        if (rawX > 0 && rawY > 0) {
-            const x = Math.round(rawX * scaleX);
-            const y = Math.round(rawY * scaleY);
+        if ((rawX || rawY) && rawX < imgW && rawY < imgH) {
+            const x = Math.min(screenW - 1, Math.round(rawX * scaleX));
+            const y = Math.min(screenH - 1, Math.round(rawY * scaleY));
             console.log(`[Screen Find] raw=(${rawX},${rawY}) -> screen=(${x},${y})`);
             return { x, y, found: true };
         }
@@ -149,9 +110,8 @@ export async function screenFind(parameters: any): Promise<string> {
     console.log(`[Screen Find] Buscando: "${description}"`);
     try {
         const [screenW, screenH] = await getScreenSize();
-        const { base64, path: tempPath } = await captureScreen();
-        const result = await findElementCoords(description, base64, screenW, screenH);
-        try { await fs.unlink(tempPath); } catch {}
+        const capture = await captureDesktopPng();
+        const result = await findElementCoords(description, capture, screenW, screenH);
         if (!result.found) {
             return `No encontre "${description}" en pantalla.`;
         }
@@ -173,9 +133,8 @@ export async function clickElement(parameters: any): Promise<string> {
     console.log(`[Click Element] Buscando y clickeando: "${description}"`);
     try {
         const [screenW, screenH] = await getScreenSize();
-        const { base64, path: tempPath } = await captureScreen();
-        const result = await findElementCoords(description, base64, screenW, screenH);
-        try { await fs.unlink(tempPath); } catch {}
+        const capture = await captureDesktopPng();
+        const result = await findElementCoords(description, capture, screenW, screenH);
         if (!result.found) {
             return `No encontre "${description}" en pantalla.`;
         }
@@ -234,25 +193,14 @@ export async function screenContext(parameters: any): Promise<string> {
     console.log(`[Screen Context] Capturando contexto...`);
     try {
         const [screenW, screenH] = await getScreenSize();
-        const { base64, path: tempPath } = await captureScreen();
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("GEMINI_API_KEY no configurada");
-        const ai = new GoogleGenAI({ apiKey });
+        const capture = await captureDesktopPng();
         const prompt = focus
             ? `Screenshot ${screenW}x${screenH}px. Focus: "${focus}". Describe relevant UI elements, buttons, text fields, positions. Be brief. Respond in Spanish.`
             : `Screenshot ${screenW}x${screenH}px. List ALL visible elements: windows, buttons, text, icons, taskbar. Be brief about positions. Respond in Spanish.`;
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash-lite",
-            contents: [{
-                role: "user",
-                parts: [
-                    { inlineData: { mimeType: "image/png", data: base64 } },
-                    { text: prompt }
-                ]
-            }]
-        });
-        try { await fs.unlink(tempPath); } catch {}
-        return response.text || "No pude describir la pantalla.";
+        return await analyzeImage({ mimeType: "image/png", data: capture.toString("base64") }, {
+            messages: [{ role: "user", content: prompt }],
+            maxTokens: 1800,
+        }) || "No pude describir la pantalla.";
     } catch (e: any) {
         console.error("[Screen Context] ", e);
         return `Error capturando contexto: ${e.message}`;
