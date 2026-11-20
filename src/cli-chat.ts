@@ -13,11 +13,12 @@
 import { createInterface, Interface } from "readline";
 import { WebSocket } from "ws";
 import path from "path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "url";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "./config/config.js";
 import { runHooks, initHooks } from "./hooks/runner.js";
-import { getQueue } from "./agent/task-queue.js";
+import { ORBIT_MASCOT } from "./core/mascot.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,8 +40,8 @@ function bgRGB(r: number, g: number, b: number) { return `${ESC}48;2;${r};${g};$
 
 // Orbit palette
 const C = {
-  accent:    fgRGB(139, 92, 246),  // #8b5cf6
-  accentBg:  bgRGB(139, 92, 246),
+  accent:    fgRGB(210, 234, 212),  // #8b5cf6
+  accentBg:  bgRGB(210, 234, 212),
   bodyFg:    fgRGB(124, 106, 247), // #7c6af7  (like clawd_body)
   bodyBg:    bgRGB(74, 61, 143),   // #4a3d8f  (like clawd_background)
   dim:       fgRGB(113, 113, 122), // #71717a
@@ -55,86 +56,15 @@ const C = {
   toolBg:    bgRGB(24, 24, 27),    // #18181b
 };
 
-// ─── Pixel‑art mascot (box-drawing chars) ───────────────────────────────────
-// ─── "Orbit" Banner ─────────────────────────────────────────────────────────
-// Hardcoded letter shapes + computed 3D shadow (offset +1 right, +1 down).
-// Face: gradient purple, Shadow: deep dark purple behind.
-// One color-switch per segment boundary — no bgRGB, no per-pixel double-char.
-
-const ORBIT_FACE = [
-  fgRGB(225, 200, 255),   // row 0 — highlight
-  fgRGB(195, 158, 252),   // row 1
-  fgRGB(172, 128, 250),   // row 2
-  fgRGB(150, 102, 242),   // row 3
-  fgRGB(132, 82, 230),    // row 4 — base
-];
-const ORBIT_SHADOW = fgRGB(55, 20, 110);   // deep purple 3D extrusion
-
-//  O      R      B      I      T
-const ORBIT_ROWS = [
-  " ████  ████  ████  ██████ ██████",
-  "██  ██ ██ ██ ██ ██   ██     ██  ",
-  "██  ██ ████  ████    ██     ██  ",
-  "██  ██ ██ █  ██ ██   ██     ██  ",
-  " ████  ██ ██ ████  ██████   ██  ",
-];
-
-function renderOrbitBanner(): string[] {
-  const SDX = 1;             // shadow offset cols
-  const SDY = 1;             // shadow offset rows
-  const faceH = ORBIT_ROWS.length;
-  const faceW = ORBIT_ROWS[0].length;
-  const outH  = faceH + SDY;
-  const outW  = faceW + SDX;
-
-  // Helper: is this coordinate a filled face pixel?
-  const isFace = (r: number, c: number) =>
-    r >= 0 && r < faceH && c >= 0 && c < faceW && ORBIT_ROWS[r][c] === "█";
-
-  const out: string[] = [];
-  for (let r = 0; r < outH; r++) {
-    let line = "";
-    let lastType = ""; // track current color to batch identical segments
-    for (let c = 0; c < outW; c++) {
-      const face   = isFace(r, c);
-      const shadow = !face && isFace(r - SDY, c - SDX);
-
-      if (face) {
-        if (lastType !== "face" + r) {
-          if (lastType) line += RESET;
-          line += ORBIT_FACE[r];
-          lastType = "face" + r;
-        }
-        line += "█";
-      } else if (shadow) {
-        if (lastType !== "shadow") {
-          if (lastType) line += RESET;
-          line += ORBIT_SHADOW;
-          lastType = "shadow";
-        }
-        line += "█";
-      } else {
-        if (lastType) { line += RESET; lastType = ""; }
-        line += " ";
-      }
-    }
-    if (lastType) line += RESET;
-    out.push(line);
-  }
-  return out;
-}
-
-// ─── Logo / Banner ──────────────────────────────────────────────────────────
-
 function getVersion(): string {
   try {
-    const pkg = require(path.join(__dirname, "../package.json"));
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, "../package.json"), "utf-8"));
     return pkg.version || "1.0.0";
   } catch { return "1.0.0"; }
 }
 
 function renderFullLogo(model: string, cwd: string): string {
-  const banner = renderOrbitBanner();
+  const banner = ORBIT_MASCOT.split("\n").map(row => C.accent + row + RESET);
   const ver = getVersion();
   const lines: string[] = [];
   lines.push("");
@@ -152,7 +82,7 @@ function renderFullLogo(model: string, cwd: string): string {
 
 function renderCondensedLogo(model: string): string {
   const ver = getVersion();
-  return `  ${ORBIT_FACE[2]}██${RESET} ${BOLD}${ORBIT_FACE[0]}ORBIT${RESET} ${C.dim}v${ver}${RESET} ${C.dimmer}· ${model}${RESET}\n`;
+  return `  ${C.accent}[o.o]${RESET} ${BOLD}${C.accent}ORBIT${RESET} ${C.dim}v${ver}${RESET} ${C.dimmer}· ${model}${RESET}\n`;
 }
 
 // ─── Spinner ────────────────────────────────────────────────────────────────
@@ -271,10 +201,10 @@ function showSlashHelp(): string {
 
 function renderTips(): string {
   const tips = [
-    `${C.accent}💻${RESET} ${C.text2}Escribe código:${RESET}    ${C.dim}"Genera una función TypeScript para..."${RESET}`,
-    `${C.accent}🔍${RESET} ${C.text2}Revisar código:${RESET}    ${C.dim}"Revisa este código en busca de bugs"${RESET}`,
-    `${C.accent}🌐${RESET} ${C.text2}Buscar en web:${RESET}     ${C.dim}"Busca en internet: ..."${RESET}`,
-    `${C.accent}🚀${RESET} ${C.text2}Tarea autónoma:${RESET}    ${C.dim}"/task Automatiza..."${RESET}`,
+    `${C.accent}${RESET} ${C.text2}Escribe código:${RESET}    ${C.dim}"Genera una función TypeScript para..."${RESET}`,
+    `${C.accent}${RESET} ${C.text2}Revisar código:${RESET}    ${C.dim}"Revisa este código en busca de bugs"${RESET}`,
+    `${C.accent}${RESET} ${C.text2}Buscar en web:${RESET}     ${C.dim}"Busca en internet: ..."${RESET}`,
+    `${C.accent}${RESET} ${C.text2}Tarea autónoma:${RESET}    ${C.dim}"/task Automatiza..."${RESET}`,
   ];
   return tips.join("\n") + "\n";
 }
@@ -326,6 +256,7 @@ class OrbitCLI {
   private model: string;
   private preferredProvider?: string;
   private conversationId = randomUUID();
+  private taskSnapshot: Array<{ id: string; goal: string; status: string }> = [];
   private connected = false;
   private streaming = false;
   private streamBuf = "";
@@ -458,7 +389,11 @@ class OrbitCLI {
       return;
     }
 
-    const tasks = getQueue().listAll();
+    this.sendWs({ type: "status" });
+  }
+
+  private renderTaskPanel() {
+    const tasks = this.taskSnapshot;
     const W = 42;
     const line = "─".repeat(W - 2);
 
@@ -645,6 +580,8 @@ class OrbitCLI {
         break;
 
       case "status":
+        this.taskSnapshot = Array.isArray(msg.tasks) ? msg.tasks : [];
+        if (this.taskPanelVisible) this.renderTaskPanel();
         if (msg.provider) this.model = msg.provider;
         if (msg.providerId) this.model = msg.providerId;
         if (msg.contextWindow) this.contextMax = msg.contextWindow;
@@ -699,7 +636,7 @@ class OrbitCLI {
         break;
 
       case "task_plan":
-        process.stdout.write(`\n${C.accent}📋${RESET} ${C.text}Tarea:${RESET} ${msg.goal || "Nueva tarea"}\n`);
+        process.stdout.write(`\n${C.accent}${RESET} ${C.text}Tarea:${RESET} ${msg.goal || "Nueva tarea"}\n`);
         if (msg.steps) {
           for (const s of msg.steps) {
             const name = typeof s === "string" ? s : s.name || s.tool || "Paso";
@@ -725,7 +662,7 @@ class OrbitCLI {
 
       case "memory":
         if (msg.key) {
-          process.stdout.write(`\n${C.accent}🧠${RESET} ${C.text2}${msg.key}${RESET} = ${C.dim}${msg.value}${RESET}\n`);
+          process.stdout.write(`\n${C.accent}${RESET} ${C.text2}${msg.key}${RESET} = ${C.dim}${msg.value}${RESET}\n`);
         }
         break;
 

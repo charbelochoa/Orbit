@@ -81,8 +81,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .sb-footer-btn:hover{background:var(--surface2);color:var(--text)}
 .sb-footer-btn.active{background:var(--surface);color:var(--accent)}
 /* SIDEBAR — hidden: full-screen chat mode */
-#sidebar{display:none !important}
-#topbar-toggle{display:none}
 /* MAIN */
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 /* TOPBAR */
@@ -280,13 +278,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #cd-cancel{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
 #cd-timer{font-size:11px;color:var(--text-muted);margin-top:10px}
 </style>
+<link rel="stylesheet" href="/orbit.css">
 </head>
 <body>
 
 <!-- CONFIRM -->
 <div id="confirm-overlay">
   <div class="confirm-dialog">
-    <div id="cd-icon">⚠️</div>
+    <div id="cd-icon">!</div>
     <div id="cd-title">Confirmar acción</div>
     <div id="cd-desc"></div>
     <div class="cd-actions">
@@ -299,12 +298,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 <!-- TITLEBAR -->
 <div id="titlebar">
-  <button id="tb-close" title="Cerrar"></button>
-  <button id="tb-minimize" title="Minimizar"></button>
+  <button id="tb-close" title="Ocultar en la bandeja" aria-label="Ocultar en la bandeja">×</button>
+  <button id="tb-minimize" title="Minimizar" aria-label="Minimizar">−</button>
   <span id="tb-title">ORBIT AI</span>
   <div id="tb-status">
     <span id="tb-dot"></span>
-    <span id="tb-provider">Gemini</span>
+    <span id="tb-provider">Conectando</span>
   </div>
 </div>
 
@@ -314,7 +313,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <div id="sidebar">
     <div id="sb-header">
       <div id="sb-logo">
-        <canvas id="sb-logo-canvas" width="14" height="8" style="width:28px;height:16px"></canvas>
+        <span class="sigil" aria-hidden="true">[o.o]</span>
         <span id="sb-logo-text">Orbit</span>
       </div>
       <button id="sidebar-collapse-btn" title="Colapsar">&#x2190;</button>
@@ -323,11 +322,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Nueva conversación
     </button>
+    <div class="sidebar-label">Conversaciones</div>
     <div id="conv-list"></div>
     <div id="sb-footer">
       <button class="sb-footer-btn" id="nav-tasks">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Tasks
+        Tareas
       </button>
       <button class="sb-footer-btn" id="nav-memory">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -335,7 +335,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </button>
       <button class="sb-footer-btn" id="nav-tools">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-        Tools
+        Herramientas
       </button>
       <button class="sb-footer-btn" id="nav-settings">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -347,7 +347,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <!-- MAIN -->
   <div id="main">
     <div id="topbar">
-      <button id="topbar-toggle" title="Sidebar (Ctrl+B)">
+      <button id="topbar-toggle" title="Panel lateral (Ctrl+B)" aria-label="Mostrar u ocultar panel lateral">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
       </button>
       <span id="topbar-title">Nueva conversación</span>
@@ -365,24 +365,24 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="view active" id="view-chat">
         <div id="chat-scroll">
           <div id="welcome">
-            <canvas id="welcome-canvas" width="14" height="8" style="width:56px;height:32px"></canvas>
-            <h2>Hola, soy Orbit</h2>
-            <p>Tu asistente de escritorio con IA. Escribe un mensaje o usa el micrófono para comenzar.</p>
+            <button id="mascot" aria-label="Saludar a Orbit"><pre aria-hidden="true">__ORBIT_MASCOT__</pre></button>
+            <h2>¿Qué hacemos hoy?</h2>
+            <p>Cuéntame qué quieres resolver o pulsa el micrófono para hablar.</p>
             <div id="welcome-prompts">
               <button class="welcome-prompt" data-prompt="Escribe código TypeScript para ">
-                <span class="wp-icon">💻</span>
+                <span class="wp-icon">&lt;/&gt;</span>
                 <div><div class="wp-title">Escribir código</div><div class="wp-text">Genera una función TypeScript</div></div>
               </button>
-              <button class="welcome-prompt" data-prompt="Revisa este código en busca de bugs:\n\n">
-                <span class="wp-icon">🔍</span>
+              <button class="welcome-prompt" data-prompt="Revisa este código y busca errores: ">
+                <span class="wp-icon">[?]</span>
                 <div><div class="wp-title">Revisar código</div><div class="wp-text">Analiza y mejora código</div></div>
               </button>
               <button class="welcome-prompt" data-prompt="Busca en internet: ">
-                <span class="wp-icon">🌐</span>
+                <span class="wp-icon">(+)</span>
                 <div><div class="wp-title">Buscar en web</div><div class="wp-text">Investiga cualquier tema</div></div>
               </button>
               <button class="welcome-prompt" data-prompt="/task ">
-                <span class="wp-icon">🚀</span>
+                <span class="wp-icon">[+]</span>
                 <div><div class="wp-title">Nueva tarea</div><div class="wp-text">Ejecuta una tarea autónoma</div></div>
               </button>
             </div>
@@ -413,9 +413,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           </div>
           <div id="slash-menu"></div>
           <div id="input-wrapper">
-            <textarea id="msg-input" placeholder="Mensaje... (/ para comandos)" rows="1" autocomplete="off" spellcheck="false"></textarea>
+            <textarea id="msg-input" placeholder="Escribe a Orbit" aria-label="Mensaje para Orbit" maxlength="32000" rows="1" autocomplete="off" spellcheck="false"></textarea>
             <div id="input-actions">
-              <button class="ia-btn" id="mic-btn" title="Voz">
+              <button class="ia-btn" id="mic-btn" title="Hablar con Orbit" aria-label="Hablar con Orbit" aria-pressed="false">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
               </button>
               <button id="send-btn" disabled title="Enviar (Enter)">
@@ -458,7 +458,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="st-section-title">Proveedor de IA</div>
           <div class="st-card">
             <div class="st-row">
-              <span class="st-label"><span>✨</span>Proveedor activo</span>
+              <span class="st-label"><span></span>Proveedor activo</span>
               <select class="st-select" id="provider-select">
                 <option value="gemini">Gemini</option>
                 <option value="openai">OpenAI</option>
@@ -466,13 +466,17 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
                 <option value="ollama">Ollama</option>
               </select>
             </div>
-            <div class="st-row">
-              <span class="st-label"><span>✨</span>Gemini</span>
-              <span class="st-badge ok" id="gemini-badge">Activo</span>
+            <p class="settings-note">Edita el archivo .env para configurar claves, modelos y endpoints. Reinicia Orbit para aplicar los cambios.</p>
+            <div class="st-row" id="settings-edit-row" hidden>
+              <button class="topbar-action" id="open-provider-settings">Abrir configuración</button>
             </div>
             <div class="st-row">
-              <span class="st-label"><span>⚙</span>Motor Python</span>
-              <span class="st-badge ok" id="python-badge">Activo</span>
+              <span class="st-label">Gemini Live</span>
+              <span class="st-badge warn" id="gemini-badge">Sin configurar</span>
+            </div>
+            <div class="st-row">
+              <span class="st-label">Visión local</span>
+              <span class="st-badge warn" id="python-badge">Opcional</span>
             </div>
           </div>
         </div>
@@ -480,33 +484,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="st-section-title">Conexión</div>
           <div class="st-card">
             <div class="st-row">
-              <span class="st-label"><span>🌐</span>WebSocket Gateway</span>
+              <span class="st-label"><span>(+)</span>WebSocket Gateway</span>
               <span class="st-badge ok" id="ws-badge">Conectado</span>
             </div>
           </div>
         </div>
-        <div class="st-section">
-          <div class="st-section-title">Preferencias</div>
-          <div class="st-card">
-            <div class="st-row">
-              <span class="st-label"><span>🔔</span>Notificaciones</span>
-              <div class="toggle on" id="tog-notif"><div class="toggle-knob"></div></div>
-            </div>
-            <div class="st-row">
-              <span class="st-label"><span>🔊</span>Sonidos</span>
-              <div class="toggle on" id="tog-sounds"><div class="toggle-knob"></div></div>
-            </div>
-          </div>
-        </div>
-        <div class="st-section">
-          <div class="st-section-title">Acerca de</div>
-          <div class="st-card">
-            <div class="st-row" style="flex-direction:column;gap:4px;align-items:center">
-              <span style="font-weight:700;font-size:14px">Orbit AI</span>
-              <span style="font-size:11px;color:var(--text-2)">v2.0.0 — Desktop Assistant</span>
-            </div>
-          </div>
-        </div>
+
       </div>
     </div>
 
@@ -521,21 +504,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 'use strict';
 /* SESSION TOKEN (injected by web-server) */
 window.__ORBIT_TOKEN = '__ORBIT_SESSION_TOKEN__';
-/* PIXEL ART */
-var PAL={'_':'','0':'#1a1030','1':'#2d1f5e','2':'#4a3d8f','3':'#7c6af7','4':'#9b8cf8','5':'#c4b9fb','6':'#ffffff','7':'#1a1a2e'};
-var HEAD=['____00000000____','___0344444430___','__034444444430__','_03444455444430_','_04446764467440_','_04446764467440_','_0344444444430__','_03444444444430_','__034444444430__'];
-function drawHead(cv){var minX=16,maxX=0;HEAD.forEach(function(r){for(var i=0;i<16;i++){if(r[i]!=='_'){if(i<minX)minX=i;if(i>maxX)maxX=i;}}});var w=maxX-minX+1,h=HEAD.length;cv.width=w;cv.height=h;var cx=cv.getContext('2d');cx.clearRect(0,0,w,h);for(var y=0;y<h;y++)for(var x=minX;x<=maxX;x++){var c=PAL[HEAD[y][x]];if(c){cx.fillStyle=c;cx.fillRect(x-minX,y,1,1);}}}
-drawHead(document.getElementById('sb-logo-canvas'));
-drawHead(document.getElementById('welcome-canvas'));
+const mascot = document.getElementById('mascot');
+mascot.addEventListener('click', () => mascot.classList.add('is-waving'));
+mascot.querySelector('pre').addEventListener('animationend', () => mascot.classList.remove('is-waving'));
 
 /* MARKDOWN — with defensive fallbacks if CDN libs fail to load */
 if(typeof marked!=='undefined'){marked.setOptions({breaks:true,gfm:true});}
 function renderMd(text){
-  if(typeof marked==='undefined') return esc(String(text||''));
+  if(typeof marked==='undefined'||typeof DOMPurify==='undefined') return '<div style="white-space:pre-wrap">'+esc(String(text||''))+'</div>';
   var dirty=marked.parse(String(text||''));
   dirty=dirty.replace(/<pre><code class="language-(\w+)">([\s\S]*?)<\/code><\/pre>/g,function(_,lang,code){var id='cb_'+Math.random().toString(36).slice(2);return '<pre><div class="code-header"><span class="code-lang">'+esc(lang)+'</span><button class="code-copy" onclick="copyCode(\''+id+'\')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button></div><code id="'+id+'" class="language-'+lang+'">'+code+'</code></pre>';});
   dirty=dirty.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g,function(_,code){var id='cb_'+Math.random().toString(36).slice(2);return '<pre><div class="code-header"><span class="code-lang">texto</span><button class="code-copy" onclick="copyCode(\''+id+'\')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button></div><code id="'+id+'">'+code+'</code></pre>';});
-  return typeof DOMPurify!=='undefined'?DOMPurify.sanitize(dirty,{USE_PROFILES:{html:true}}):dirty;
+  return DOMPurify.sanitize(dirty,{USE_PROFILES:{html:true}});
 }
 function applyHL(el){if(typeof hljs==='undefined')return;el.querySelectorAll('pre code').forEach(function(b){hljs.highlightElement(b);});}
 function copyCode(id){var el=document.getElementById(id);if(!el)return;navigator.clipboard.writeText(el.innerText).catch(function(){});var btn=el.parentElement&&el.parentElement.querySelector('.code-copy');if(btn){btn.textContent='✓ Copiado';setTimeout(function(){btn.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar';},2000);}}
@@ -545,15 +525,32 @@ function tsShort(){var d=new Date();return d.getHours()+':'+String(d.getMinutes(
 function relMs(ms){return ms<1000?ms+'ms':(ms/1000).toFixed(1)+'s';}
 
 /* CONVERSATIONS */
-var conversations=[],activeConvId=null,convCounter=0;
-function genId(){return 'conv_'+Date.now()+'_'+(++convCounter);}
+var conversations=[],activeConvId=null;
+try {
+  const saved=JSON.parse(localStorage.getItem('orbit-conversations')||'null');
+  if(saved&&Array.isArray(saved.items)) {
+    conversations=saved.items;
+    activeConvId=conversations.some(conv=>conv.id===saved.active)?saved.active:conversations[0]?.id;
+  }
+} catch {}
+function genId(){return 'conv_'+crypto.randomUUID();}
+function persistConversations(){
+  try {
+    const items=conversations.slice(0,24).map(conv=>({...conv,messages:conv.messages.slice(-80)}));
+    localStorage.setItem('orbit-conversations',JSON.stringify({items,active:activeConvId}));
+  } catch {}
+}
 function createConversation(title){var id=genId();conversations.unshift({id:id,title:title||'Nueva conversación',messages:[],createdAt:Date.now()});activeConvId=id;renderConvList();clearChatUI();updateTopbarTitle();return id;}
-function setActiveConv(id){if(activeConvId===id)return;activeConvId=id;renderConvList();reloadConvMessages();updateTopbarTitle();}
+function setActiveConv(id){if(sendStreaming)return;if(activeConvId===id){showView('view-chat');return;}showView('view-chat');activeConvId=id;renderConvList();reloadConvMessages();updateTopbarTitle();}
 function updateTopbarTitle(){var conv=conversations.find(function(c){return c.id===activeConvId;});g('topbar-title').textContent=conv?conv.title:'Nueva conversación';}
-function deleteConv(id){conversations=conversations.filter(function(c){return c.id!==id;});if(activeConvId===id){activeConvId=conversations.length?conversations[0].id:null;if(!activeConvId){createConversation();return;}reloadConvMessages();updateTopbarTitle();}renderConvList();}
+function deleteConv(id){if(sendStreaming)return;sendWs({type:'history_delete',payload:{conversationId:id}});conversations=conversations.filter(function(c){return c.id!==id;});if(activeConvId===id){activeConvId=conversations.length?conversations[0].id:null;if(!activeConvId){createConversation();return;}reloadConvMessages();updateTopbarTitle();}renderConvList();}
+function saveChatMessage(role,text){
+  var conv=getActiveConv();
+  if(conv&&typeof text==='string'&&text){conv.messages.push({role,content:text,ts:Date.now()});renderConvList();}
+}
 function getActiveConv(){return conversations.find(function(c){return c.id===activeConvId;});}
 function renameConvFromFirstMessage(text){var conv=getActiveConv();if(!conv)return;if(conv.title!=='Nueva conversación')return;conv.title=text.slice(0,42).replace(/\n/g,' ');updateTopbarTitle();renderConvList();}
-function renderConvList(){var list=g('conv-list');list.innerHTML='';conversations.forEach(function(conv){var item=document.createElement('div');item.className='conv-item'+(conv.id===activeConvId?' active':'');var lastMsg=conv.messages.length?conv.messages[conv.messages.length-1]:null;var preview=lastMsg?(typeof lastMsg.content==='string'?lastMsg.content:''):'';preview=preview.slice(0,38);item.innerHTML='<div class="conv-icon">💬</div><div class="conv-info"><div class="conv-title">'+esc(conv.title)+'</div><div class="conv-preview">'+esc(preview||'Sin mensajes')+'</div></div><button class="conv-delete-btn" title="Eliminar" data-id="'+esc(conv.id)+'">✕</button>';item.addEventListener('click',function(e){if(e.target.classList.contains('conv-delete-btn'))return;setActiveConv(conv.id);});item.querySelector('.conv-delete-btn').addEventListener('click',function(e){e.stopPropagation();deleteConv(conv.id);});list.appendChild(item);});}
+function renderConvList(){persistConversations();var list=g('conv-list');list.innerHTML='';conversations.forEach(function(conv){var item=document.createElement('div');item.className='conv-item'+(conv.id===activeConvId?' active':'');var lastMsg=conv.messages.length?conv.messages[conv.messages.length-1]:null;var preview=lastMsg?(typeof lastMsg.content==='string'?lastMsg.content:''):'';preview=preview.slice(0,38);item.innerHTML='<div class="conv-icon">>_</div><div class="conv-info"><div class="conv-title">'+esc(conv.title)+'</div><div class="conv-preview">'+esc(preview||'Sin mensajes')+'</div></div><button class="conv-delete-btn" title="Eliminar" data-id="'+esc(conv.id)+'">✕</button>';item.addEventListener('click',function(e){if(e.target.classList.contains('conv-delete-btn'))return;setActiveConv(conv.id);});item.querySelector('.conv-delete-btn').addEventListener('click',function(e){e.stopPropagation();deleteConv(conv.id);});list.appendChild(item);});}
 function reloadConvMessages(){var conv=getActiveConv();clearChatUI();if(!conv||!conv.messages.length)return;conv.messages.forEach(function(m){if(m.role==='user')addUserBubble(m.content);else if(m.role==='orbit')addOrbitBubble(m.content);});}
 
 /* CHAT UI */
@@ -565,7 +562,7 @@ g('chat-scroll').addEventListener('scroll',function(){var el=this,dist=el.scroll
 g('scroll-to-bottom').addEventListener('click',function(){scrollBottom(true);unreadCount=0;updateUnreadBadge();});
 function updateUnreadBadge(){var badge=g('unread-badge');if(unreadCount>0){badge.textContent=unreadCount;badge.classList.add('visible');}else{badge.classList.remove('visible');}}
 
-function makeMsgAvatar(){var cv=document.createElement('canvas');cv.width=14;cv.height=8;cv.style.width='14px';cv.style.height='8px';cv.style.imageRendering='pixelated';drawHead(cv);return cv;}
+function makeMsgAvatar(){var element=document.createElement('span');element.className='sigil';element.textContent='o.o';element.setAttribute('aria-hidden','true');return element;}
 
 function addUserBubble(text){killWelcome();finishStream();var group=document.createElement('div');group.className='msg-group user';group.innerHTML='<div class="msg-bubble">'+esc(text)+'</div><div class="msg-meta">Tú · '+tsShort()+'</div>';g('messages').appendChild(group);if(isAtBottom)scrollBottom(false);else{unreadCount++;updateUnreadBadge();}return group;}
 
@@ -601,8 +598,8 @@ function setBadge(id,state){var el=g(id);if(!el)return;el.className='st-badge';i
 function handle(msg){
   switch(msg.type){
     case 'orbit_ready':setConn('online');setStatus('');break;
-    case 'user_message':addUserBubble(msg.text);break;
-    case 'orbit_message':showThinking(false);finishStream();addOrbitBubble(msg.text);setStatus('');setSendMode(false);break;
+    case 'user_message':saveChatMessage('user',msg.text);addUserBubble(msg.text);break;
+    case 'orbit_message':showThinking(false);finishStream();saveChatMessage('orbit',msg.text);addOrbitBubble(msg.text);setStatus('');setSendMode(false);break;
     case 'orbit_chunk':showThinking(false);appendChunk(msg.text);break;
     case 'turn_complete':finishStream();showThinking(false);setStatus('');setSendMode(false);break;
     case 'tool_call':addToolBlock(msg.tool);addToolEvent(msg.tool);break;
@@ -612,7 +609,7 @@ function handle(msg){
     case 'task_queued':if(msg.taskId)upsertTask(msg.taskId,{title:msg.goal||'Tarea en cola',status:'pending',steps:[]});break;
     case 'task_progress':if(msg.taskId)upsertTask(msg.taskId,{progress:msg.progress,status:'running'});break;
     case 'task_step_done':if(msg.taskId)markTaskStep(msg.taskId,msg.step,'done');break;
-    case 'task_step_error':if(msg.taskId)markTaskStep(msg.taskId,msg.step,'error');if(msg.message)addOrbitBubble('⚠️ '+msg.message);break;
+    case 'task_step_error':if(msg.taskId)markTaskStep(msg.taskId,msg.step,'error');if(msg.message)addOrbitBubble('! '+msg.message);break;
     case 'task_complete':if(msg.taskId)upsertTask(msg.taskId,{status:'done',progress:100});showThinking(false);if(msg.summary)addOrbitBubble(msg.summary);break;
     case 'task_cancelled':if(msg.taskId)upsertTask(msg.taskId,{status:'cancelled'});break;
     case 'task_paused':if(msg.id)upsertTask(msg.id,{status:'paused'});break;
@@ -621,10 +618,10 @@ function handle(msg){
     case 'visual_loop_status':updateVisualBar(msg.status,msg.goal);break;
     case 'visual_loop_step':updateVisualBar('running',null,msg.loop,msg.maxLoops,msg.action);break;
     case 'memory':if(msg.key)updateMem(msg.key,msg.value,msg.ts);break;
-    case 'status':if(msg.gemini)setBadge('gemini-badge',msg.gemini);if(msg.python)setBadge('python-badge',msg.python);if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
-    case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.id)syncProviderSel(msg.id);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
+    case 'status':if(msg.gemini!==undefined)setBadge('gemini-badge',msg.gemini?'Configurado':'Sin configurar');if(msg.python!==undefined)setBadge('python-badge',msg.python?'Configurada':'Opcional');if(msg.provider){g('tb-provider').textContent=msg.provider;}if(msg.providerId)syncProviderSel(msg.providerId);break;
+    case 'provider_changed':var pname=msg.name||msg.provider||msg.id||'AI';g('tb-provider').textContent=pname;if(msg.provider)syncProviderSel(msg.provider);addOrbitBubble('Proveedor cambiado a **'+pname+'**');break;
     case 'command_result':addOrbitBubble(msg.text||msg.message||'OK');setSendMode(false);break;
-    case 'command_error':addOrbitBubble('⚠️ '+(msg.text||msg.message||'Error'));setSendMode(false);break;
+    case 'command_error':addOrbitBubble('! '+(msg.text||msg.message||'Error'));setSendMode(false);break;
     case 'confirm_action':showConfirm(msg.confirmId,msg.action,msg.description);break;
     case 'error':showThinking(false);setStatus('Error: '+(msg.message||''),'err');setSendMode(false);break;
     case 'chat_cleared':clearChatUI();break;
@@ -637,11 +634,11 @@ function handle(msg){
 /* SEND */
 var sendStreaming=false;
 function setSendMode(active){sendStreaming=active;var btn=g('send-btn');if(active){btn.disabled=false;btn.classList.add('streaming');btn.title='Detener';btn.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';}else{btn.classList.remove('streaming');btn.title='Enviar (Enter)';btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';btn.disabled=!g('msg-input').value.trim();}}
-function sendMessage(){if(sendStreaming){sendWs({type:'chat',payload:{text:'/stop'}});return;}var inp=g('msg-input'),text=inp.value.trim();if(!text||!ws||ws.readyState!==1)return;if(!activeConvId)createConversation(text.slice(0,42));renameConvFromFirstMessage(text);var conv=getActiveConv();if(conv)conv.messages.push({role:'user',content:text,ts:Date.now()});addUserBubble(text);sendWs({type:'chat',payload:{text:text}});inp.value='';inp.style.height='auto';updateCharCount();setSendMode(true);showThinking(true,'Pensando...');hideSlashMenu();}
+function sendMessage(){if(sendStreaming){sendWs({type:'chat',payload:{text:'/stop'}});return;}var inp=g('msg-input'),text=inp.value.trim();if(!text||!ws||ws.readyState!==1)return;if(!activeConvId)createConversation(text.slice(0,42));renameConvFromFirstMessage(text);var conv=getActiveConv();if(conv)conv.messages.push({role:'user',content:text,ts:Date.now()});addUserBubble(text);sendWs({type:'chat',payload:{text:text,conversationId:activeConvId}});renderConvList();inp.value='';inp.style.height='auto';updateCharCount();setSendMode(true);showThinking(true,'Pensando...');hideSlashMenu();}
 g('send-btn').addEventListener('click',sendMessage);
 g('msg-input').addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}if(e.key==='Escape')hideSlashMenu();if(slashMenuVisible){if(e.key==='ArrowDown'){e.preventDefault();moveSlashSel(1);}if(e.key==='ArrowUp'){e.preventDefault();moveSlashSel(-1);}if(e.key==='Tab'||e.key==='Enter'){if(e.key==='Tab')e.preventDefault();applySlashSel();}}});
 g('msg-input').addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,160)+'px';g('send-btn').disabled=!this.value.trim()&&!sendStreaming;updateCharCount();handleSlashInput(this.value);});
-function updateCharCount(){var len=g('msg-input').value.length,el=g('char-count');if(len>3000){el.textContent=len+'/4000';el.className=len>3800?'over':'warn';}else{el.textContent='';el.className='';}}
+function updateCharCount(){var len=g('msg-input').value.length,el=g('char-count');if(len>25000){el.textContent=len+'/32000';el.className=len>31000?'over':'warn';}else{el.textContent='';el.className='';}}
 
 /* SLASH */
 var SLASH_COMMANDS=[{cmd:'/task',desc:'Ejecuta una tarea autónoma'},{cmd:'/stop',desc:'Detiene la generación actual'},{cmd:'/clear',desc:'Limpia el chat'},{cmd:'/memory',desc:'Muestra la memoria'},{cmd:'/model',desc:'Cambia el modelo de IA'},{cmd:'/status',desc:'Estado del sistema'},{cmd:'/skills',desc:'Lista de skills disponibles'},{cmd:'/cancel',desc:'Cancela una tarea activa'},{cmd:'/daemon',desc:'Modo daemon'},];
@@ -662,20 +659,32 @@ g('nav-tasks').addEventListener('click',function(){showView('view-tasks');});
 g('nav-memory').addEventListener('click',function(){showView('view-memory');});
 g('nav-tools').addEventListener('click',function(){showView('view-tools');});
 g('nav-settings').addEventListener('click',function(){showView('view-settings');});
+if(window.orbitElectron?.openProviderSettings){
+  g('settings-edit-row').hidden=false;
+  g('open-provider-settings').addEventListener('click',async function(){
+    try {
+      const error=await window.orbitElectron.openProviderSettings();
+      if(error) setStatus(error,'err');
+    } catch {
+      setStatus('Orbit no pudo abrir la configuración.','err');
+    }
+  });
+}
 
 /* SIDEBAR */
-var sidebarOpen=true;
+var sidebarOpen=!matchMedia('(max-width: 720px)').matches;
+g('sidebar').classList.toggle('collapsed',!sidebarOpen);
 function toggleSidebar(){sidebarOpen=!sidebarOpen;g('sidebar').classList.toggle('collapsed',!sidebarOpen);}
 g('sidebar-collapse-btn').addEventListener('click',toggleSidebar);
 g('topbar-toggle').addEventListener('click',function(){toggleSidebar();showView('view-chat');});
 document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key==='b'){e.preventDefault();toggleSidebar();}});
 
 /* NEW CHAT + CLEAR */
-g('new-chat-btn').addEventListener('click',function(){createConversation();showView('view-chat');g('msg-input').focus();});
-g('btn-clear-chat').addEventListener('click',function(){sendWs({type:'chat',payload:{text:'/clear'}});clearChatUI();var conv=getActiveConv();if(conv){conv.messages=[];conv.title='Nueva conversación';}updateTopbarTitle();renderConvList();});
+g('new-chat-btn').addEventListener('click',function(){if(sendStreaming)return;createConversation();showView('view-chat');g('msg-input').focus();});
+g('btn-clear-chat').addEventListener('click',function(){if(sendStreaming)return;sendWs({type:'chat',payload:{text:'/clear',conversationId:activeConvId}});clearChatUI();var conv=getActiveConv();if(conv){conv.messages=[];conv.title='Nueva conversación';}updateTopbarTitle();renderConvList();});
 
 /* MODEL SELECT */
-g('model-select').addEventListener('change',function(){sendWs({type:'chat',payload:{text:'/model '+this.value}});g('tb-provider').textContent=this.options[this.selectedIndex].text;});
+g('model-select').addEventListener('change',function(){sendWs({type:'chat',payload:{text:'/model '+this.value}});});
 g('provider-select').addEventListener('change',function(){sendWs({type:'chat',payload:{text:'/model '+this.value}});syncProviderSel(this.value);g('model-select').value=this.value;});
 function syncProviderSel(id){var sel=g('provider-select');if(sel)sel.value=id;var msel=g('model-select');if(msel)msel.value=id;}
 
@@ -738,14 +747,14 @@ g('cd-cancel').addEventListener('click',function(){hideConfirm(false);});
 
 /* TITLEBAR */
 g('tb-close').addEventListener('click',function(){if(IS_ELECTRON&&window.orbitElectron&&window.orbitElectron.send)window.orbitElectron.send('window:hide');else window.close();});
-g('tb-minimize').addEventListener('click',function(){if(IS_ELECTRON&&window.orbitElectron&&window.orbitElectron.send)window.orbitElectron.send('window:minimize');});
+g('tb-minimize').addEventListener('click',function(){if(IS_ELECTRON&&window.orbitElectron&&window.orbitElectron.send)window.orbitElectron.send('app:minimize');});
 if(IS_ELECTRON&&window.orbitElectron&&window.orbitElectron.on){window.orbitElectron.on('backend:ready',function(){setConn('online');});window.orbitElectron.on('backend:error',function(){setConn('offline');});}
 
 /* TOGGLES */
 document.querySelectorAll('.toggle').forEach(function(tog){tog.addEventListener('click',function(){this.classList.toggle('on');});});
 
 /* BOOT */
-createConversation();
+if(activeConvId){renderConvList();reloadConvMessages();updateTopbarTitle();}else createConversation();
 connect();
 g('msg-input').focus();
 </script>

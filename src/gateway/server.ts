@@ -7,6 +7,7 @@ import { resolvePermission, type PermissionAnswer } from "../core/permission-bro
 import { loopRegistry } from "../agent/loop-registry.js";
 import { browserControl } from "../actions/browser-control.js";
 import { clearHistory } from "../memory/chat-history.js";
+import { providerRegistry } from "../providers/registry.js";
 
 // ── Session auth token (generated per process lifetime) ──────────────
 const SESSION_TOKEN = crypto.randomBytes(32).toString("hex");
@@ -167,7 +168,7 @@ export async function startGateway(
                 }
 
                 // Require auth for mutating operations
-                if (!client.authenticated && msg.type !== "ping" && msg.type !== "status") {
+                if (!client.authenticated && msg.type !== "ping") {
                     ws.send(JSON.stringify({ type: "error", message: "No autenticado. Envía {type:'auth', token:'...'} primero." }));
                     return;
                 }
@@ -271,8 +272,13 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
 
         case "status": {
             const tasks = getQueue().listAll();
+            const provider = providerRegistry.getActiveInfo();
             client.ws.send(JSON.stringify({
                 type: "status",
+                provider: provider.name,
+                providerId: provider.id,
+                gemini: providerRegistry.get("gemini")?.isAvailable() ?? false,
+                python: process.env.ORBIT_VISION_ENGINE === "1",
                 tasks: tasks.map(t => ({
                     id: t.id,
                     goal: t.goal.slice(0, 60),
@@ -284,6 +290,12 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 outputTokens:  _sessionOutputTokens,
                 contextWindow: _contextWindow,
             }));
+            break;
+        }
+
+        case "history_delete": {
+            const id = payload?.conversationId;
+            if (typeof id === "string" && /^conv_[\w-]{1,95}$/.test(id)) clearHistory(`chat:${id}`);
             break;
         }
 

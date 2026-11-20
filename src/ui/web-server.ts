@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { PROJECT_ROOT } from "../config/paths.js";
 import { getSessionToken } from "../gateway/server.js";
+import { ORBIT_MASCOT } from "../core/mascot.js";
 
 const WEB_DIR = path.join(PROJECT_ROOT, "src", "ui", "web");
 const TYPES: Record<string, string> = {
@@ -54,7 +55,8 @@ export async function startWebServer(port: number, gatewayPort: number) {
             if (path.basename(filePath) === "index.html") {
                 data = data.toString("utf-8")
                     .replace("__ORBIT_SESSION_TOKEN__", getSessionToken())
-                    .replace("__ORBIT_GATEWAY_PORT__", String(gatewayPort));
+                    .replace("__ORBIT_GATEWAY_PORT__", String(gatewayPort))
+                    .replace("__ORBIT_MASCOT__", () => ORBIT_MASCOT.replaceAll("&", "&amp;").replaceAll("<", "&lt;"));
             }
             res.writeHead(200, { ...headers, "Content-Type": type }).end(data);
         } catch {
