@@ -6,6 +6,10 @@ import { getSessionToken } from "../gateway/server.js";
 import { ORBIT_MASCOT } from "../core/mascot.js";
 
 const WEB_DIR = path.join(PROJECT_ROOT, "src", "ui", "web");
+const VENDOR_FILES = new Map([
+    ["/vendor/marked.js", path.join(PROJECT_ROOT, "node_modules", "marked", "lib", "marked.umd.js")],
+    ["/vendor/purify.js", path.join(PROJECT_ROOT, "node_modules", "dompurify", "dist", "purify.min.js")],
+]);
 const TYPES: Record<string, string> = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -25,11 +29,14 @@ export async function startWebServer(port: number, gatewayPort: number) {
         "Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
         "Content-Security-Policy": [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data: blob:",
             `connect-src 'self' ws://127.0.0.1:${gatewayPort}`,
             "frame-ancestors 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "object-src 'none'",
         ].join("; "),
     };
 
@@ -44,9 +51,10 @@ export async function startWebServer(port: number, gatewayPort: number) {
             res.end(JSON.stringify({ service: "orbit", status: "ok" }));
             return;
         }
-        const filePath = path.resolve(WEB_DIR, pathname === "/" ? "index.html" : "." + pathname);
+        const vendorPath = VENDOR_FILES.get(pathname);
+        const filePath = vendorPath || path.resolve(WEB_DIR, pathname === "/" ? "index.html" : "." + pathname);
         const type = TYPES[path.extname(filePath)];
-        if (!filePath.startsWith(WEB_DIR + path.sep) || !type) {
+        if ((!vendorPath && !filePath.startsWith(WEB_DIR + path.sep)) || !type) {
             res.writeHead(404, headers).end();
             return;
         }

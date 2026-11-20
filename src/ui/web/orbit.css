@@ -105,6 +105,8 @@ button, input, textarea, select { font: inherit; }
 .msg-group { padding-inline: clamp(14px, 3vw, 34px); }
 .msg-body :not(pre) > code { color: var(--accent); }
 .msg-body pre { background: #151815; }
+.code-block { overflow: hidden; margin: 10px 0; border: 1px solid var(--border); border-radius: var(--radius); }
+.code-block pre { margin: 0; border: 0; border-radius: 0; }
 #input-area { width: 100%; padding: 10px max(16px, calc((100% - 742px) / 2)) 14px; border-top: 0; background: var(--bg); }
 #input-wrapper { padding: 10px 12px; box-shadow: 0 8px 30px #0004; }
 #input-wrapper:focus-within { border-color: #637965; box-shadow: 0 0 0 3px var(--accent-glow); }
