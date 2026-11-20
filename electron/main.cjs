@@ -46,15 +46,22 @@ function warn(msg) { console.warn(`[Electron] ${msg}`); }
 function err(msg)  { console.error(`[Electron] ${msg}`); }
 
 function orbitHome() {
-  return process.env.ORBIT_HOME || (IS_PACKED ? app.getPath("userData") : ROOT);
+  return path.resolve(process.env.ORBIT_HOME || (IS_PACKED ? app.getPath("userData") : ROOT));
 }
 
 function startBackend() {
   const entry = path.join(ROOT, "dist", "index.js");
   if (!fs.existsSync(entry)) throw new Error("Falta la compilación del agente. Ejecuta npm run build.");
-  const workspace = process.env.ORBIT_WORKSPACE || (IS_PACKED ? app.getPath("documents") : ROOT);
-  const logDir = path.join(orbitHome(), "logs");
-  const settingsEnv = providerEnvironment(orbitHome(), warn);
+  const home = orbitHome();
+  let workspace = path.resolve(process.env.ORBIT_WORKSPACE || (IS_PACKED ? app.getPath("documents") : ROOT));
+  if (!fs.statSync(workspace, { throwIfNoEntry: false })?.isDirectory()) {
+    if (process.env.ORBIT_WORKSPACE) throw new Error("La carpeta indicada por ORBIT_WORKSPACE no está disponible.");
+    workspace = path.join(home, "workspace");
+    fs.mkdirSync(workspace, { recursive: true });
+  }
+  const configPath = process.env.ORBIT_CONFIG ? path.resolve(process.env.ORBIT_CONFIG) : undefined;
+  const logDir = path.join(home, "logs");
+  const settingsEnv = providerEnvironment(home, warn);
   fs.mkdirSync(logDir, { recursive: true });
   const logStream = fs.createWriteStream(path.join(logDir, "backend.log"), { flags: "a" });
   const child = spawn(process.execPath, [entry], {
@@ -62,7 +69,8 @@ function startBackend() {
     env: {
       ...process.env,
       ...settingsEnv,
-      ORBIT_HOME: orbitHome(),
+      ORBIT_HOME: home,
+      ...(configPath ? { ORBIT_CONFIG: configPath } : {}),
       ORBIT_ENGINE_DIR: IS_PACKED ? path.join(process.resourcesPath, "engine") : path.join(ROOT, "engine"),
       ELECTRON_RUN_AS_NODE: "1",
     },
