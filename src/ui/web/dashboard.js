@@ -557,7 +557,7 @@ function renderTaskCard(task) {
     let state = terminalStepStates.has(step.state) ? (step.state === 'done' ? 'done' : 'error') : '';
     if (uncertain) state = 'uncertain';
     else if (task.status === 'running' && step.state === 'running') state = 'active';
-    const note = uncertain ? 'Resultado por confirmar' : step.error;
+    const note = uncertain ? (step.replaySafe ? 'Lectura pendiente de repetir' : 'Resultado por confirmar') : step.error;
     return '<li class="task-step '+state+'"><span class="task-step-dot"></span><span>'+
       esc(step.description||step.tool||'Paso')+(note?'<small>'+esc(note)+'</small>':'')+'</span></li>';
   }).join('');

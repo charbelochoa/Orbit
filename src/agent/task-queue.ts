@@ -273,7 +273,7 @@ class TaskQueue {
         const saved = task?.checkpoint;
         if (!task || task.status !== "interrupted" || !saved) return "unavailable";
         const states = Object.entries(saved.states);
-        if (!retryInterrupted && states.some(([, entry]) => entry?.state === "running")) {
+        if (!retryInterrupted && summarizeTaskSteps(saved).some(step => step.state === "running" && !step.replaySafe)) {
             return "needs_confirmation";
         }
         const checkpoint: TaskCheckpoint = {

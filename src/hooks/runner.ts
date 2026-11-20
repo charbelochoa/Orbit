@@ -32,6 +32,12 @@ export function reloadHooks(): void {
     loadHooksConfig();
 }
 
+export function hasToolHooks(toolName: string): boolean {
+    initHooks();
+    return getHooksForEvent("PreToolUse").some(rule => matchesRule(rule, toolName)) ||
+        getHooksForEvent("PostToolUse").some(rule => matchesRule(rule, toolName));
+}
+
 // ── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -51,7 +57,7 @@ export async function runHooks(event: HookEvent, context: Partial<HookContext> =
     };
 
     // Filter rules by match pattern (for Pre/PostToolUse)
-    const applicable = rules.filter(rule => matchesRule(rule, ctx));
+    const applicable = rules.filter(rule => matchesRule(rule, ctx.tool_name));
     if (applicable.length === 0) return [];
 
     log.debug(`Running ${applicable.length} hook(s) for ${event}`);
@@ -106,10 +112,9 @@ export async function runPostToolHooks(
 
 // ── Internal ─────────────────────────────────────────────────────────────────
 
-function matchesRule(rule: HookRule, ctx: HookContext): boolean {
+function matchesRule(rule: HookRule, target?: string): boolean {
     if (!rule.match) return true;
 
-    const target = ctx.tool_name || "";
     if (!target) return true;
 
     // Glob-like match: "Bash" matches "cmd_control", "file_*" matches "file_edit" etc.

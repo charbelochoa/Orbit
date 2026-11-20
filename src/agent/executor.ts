@@ -8,8 +8,7 @@ import { runInLane } from "./lanes.js";
 import { getContextEngine } from "../context/registry.js";
 import { OrbitToolError, getToolFailure } from "../core/orbit-error.js";
 import { IterationBudget } from "./iteration-budget.js";
-import { toolRegistry } from "../core/registry.js";
-import { summarizeTaskSteps, type TaskCheckpoint, type TaskStepState, type TaskStepResult } from "./task-checkpoint.js";
+import { summarizeTaskSteps, toolMayHaveSideEffect, type TaskCheckpoint, type TaskStepState, type TaskStepResult } from "./task-checkpoint.js";
 import { currentProviderSelection } from "../providers/selection.js";
 
 interface StepResult extends TaskStepResult {
@@ -23,7 +22,6 @@ interface TaskJournal {
 }
 
 const MAX_ATTEMPTS = 3;
-const RETRYABLE_READS = new Set(["glob_search", "grep_search", "todo_read", "web_fetch", "web_search", "weather_report"]);
 
 export class AgentExecutor {
     private readonly controller = new AbortController();
@@ -109,8 +107,8 @@ export class AgentExecutor {
                 if (step.dependsOn.some(id => !results.get(id)?.success)) {
                     result = this.failure(step, "Un paso previo no terminó correctamente.");
                 } else {
-                    result = await this.runStep(step, outputs, goal, () => {
-                        saveStep(step.step, { state: "running" });
+                    result = await this.runStep(step, outputs, goal, replaySafe => {
+                        saveStep(step.step, { state: "running", replaySafe });
                         broadcast({ type: "task_step_started", taskId, step: step.step });
                     }, onProgress);
                 }
@@ -163,17 +161,15 @@ export class AgentExecutor {
         step: PlanStep,
         outputs: Map<string, string>,
         goal: string,
-        onDispatch: () => void,
+        onDispatch: (replaySafe: boolean) => void,
         onProgress?: (message: string) => void,
     ): Promise<StepResult> {
         const signal = this.controller.signal;
         const taskId = this.sessionId;
         const budget = new IterationBudget(MAX_ATTEMPTS);
         const parameters = this.applyOutputs(step.parameters, outputs);
-        const tool = toolRegistry.get(step.tool);
-        const canRetry = tool && !tool.capabilities.destructive && !tool.capabilities.requiresUI &&
-            RETRYABLE_READS.has(tool.id);
         let dispatched = false;
+        let replaySafe = false;
         let retryFailure: StepResult | undefined;
         while (budget.consume()) {
             signal.throwIfAborted();
@@ -181,8 +177,10 @@ export class AgentExecutor {
                 const output = await runInLane(taskId, () => executeTool(step.tool, parameters, signal, taskId, {
                     admissionSignal: this.dispatchSignal,
                     beforeDispatch: () => {
-                        if (dispatched) return;
-                        onDispatch();
+                        const hasEffects = toolMayHaveSideEffect(step.tool);
+                        if (dispatched && (!replaySafe || !hasEffects)) return;
+                        replaySafe = !hasEffects;
+                        onDispatch(replaySafe);
                         dispatched = true;
                     },
                 }), this.dispatchSignal, step.tool);
@@ -199,7 +197,7 @@ export class AgentExecutor {
                 const message = error instanceof Error ? error.message : String(error);
                 const denied = error instanceof OrbitToolError && error.code === "PERMISSION_DENIED";
                 const failed = this.failure(step, message, denied);
-                if (canRetry && !denied && budget.remaining > 0 && !this.dispatchSignal.aborted) {
+                if (replaySafe && !toolMayHaveSideEffect(step.tool) && !denied && budget.remaining > 0 && !this.dispatchSignal.aborted) {
                     const attempt = MAX_ATTEMPTS - budget.remaining;
                     const recovery = await analyzeError(step, message, attempt, goal, this.dispatchSignal);
                     if (recovery.decision === ErrorDecision.RETRY && !this.dispatchSignal.aborted) {
