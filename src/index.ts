@@ -1,16 +1,14 @@
-import { GoogleGenAI, Modality } from "@google/genai";
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 
 import { loadMemory, formatMemoryForPrompt, maybeUpdateMemoryAsync, startMemoryAutoSave } from "./memory/memory-manager.js";
 import { addMessage, getHistory } from "./memory/chat-history.js";
-import { startGateway, broadcast, setTypingState, updateTokenUsage, onElectronConnected, type ChatTurn } from "./gateway/server.js";
+import { startGateway, broadcast, updateTokenUsage, onElectronConnected, type ChatTurn, type VoiceTurn } from "./gateway/server.js";
 import { startWebServer } from "./ui/web-server.js";
-import { getQueue, TaskPriority } from "./agent/task-queue.js";
-import { TOOL_DECLARATIONS } from "./core/tool-registry.js";
 import { toolRegistry } from "./core/registry.js";
 import { getSystemPrompt } from "./core/prompt.js";
+import { runVoiceTurn } from "./core/voice.js";
 import { executeTool } from "./actions/index.js";
 import { killPS } from "./actions/ps-bridge.js";
 import { loadConfig, getConfig } from "./config/config.js";
@@ -38,15 +36,6 @@ const log = createLogger("Orbit");
 // Load config early — merges orbit.yaml + .env
 const config = loadConfig();
 setLogLevel(config.logging.level);
-
-const MODEL = config.providers.gemini.models["live"] || "gemini-2.5-flash-native-audio-latest";
-const SESSION_ID = `orbit_${Date.now()}`;
-let geminiSession: any = null;
-let isGeminiReady = false;
-let _geminiReconnectDelay = 2000;
-const GEMINI_MAX_RECONNECT_DELAY = 60000;
-let _lastUserText = "";
-let _lastOrbitText = "";
 
 // Python Vision Engine (sidecar)
 let pythonEngine: ChildProcess | null = null;
@@ -158,132 +147,58 @@ async function chat({ text, sessionId, send, signal, provider }: ChatTurn) {
     }
 }
 
-// Connect to Gemini Live API (via SDK)
-async function connectGemini() {
-    const apiKey = getConfig().providers.gemini.apiKey;
-    if (!apiKey || apiKey === "TU_API_KEY_AQUI") return;
-    const ai = new GoogleGenAI({ apiKey });
+async function voice({ data, sessionId, send, signal }: VoiceTurn) {
+    send({ type: "typing", state: "thinking" });
     try {
-        const mem = await loadMemory();
-        const memStr = formatMemoryForPrompt(mem);
-        const now = new Date().toLocaleString("es-MX", {
-            weekday: "long", year: "numeric", month: "long",
-            day: "numeric", hour: "2-digit", minute: "2-digit"
-        });
-        const systemPrompt = getSystemPrompt(memStr, now);
-        geminiSession = await ai.live.connect({
-            model: MODEL,
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } }
-                },
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                tools: [{ functionDeclarations: TOOL_DECLARATIONS as any[] }]
-            },
-            callbacks: {
-                onopen: () => {
-                    _geminiReconnectDelay = 2000;
-                    isGeminiReady = true;
-                    log.info("Sesion Gemini Live lista. Orbit esta en linea!");
-                    broadcast({ type: "orbit_ready", message: "Orbit esta listo." });
-                },
-                onmessage: async (msg: any) => {
-                    if (msg.serverContent) {
-                        const sc = msg.serverContent;
-                        if (sc.inputTranscription?.text?.trim()) {
-                            _lastUserText = sc.inputTranscription.text.trim();
-                            log.info(`[Usuario] ${_lastUserText}`);
-                            addMessage(SESSION_ID, "user", _lastUserText);
-                            broadcast({ type: "user_message", text: _lastUserText });
-                            setTypingState("thinking");
-                            // Sprint 12: Wake word detection
-                            wakeWordMonitor.check(_lastUserText);
-                        }
-                        if (sc.modelTurn?.parts) {
-                            for (const part of sc.modelTurn.parts) {
-                                if (part.text?.trim()) _lastOrbitText += part.text;
-                            }
-                        }
-                        if (sc.outputTranscription?.text?.trim()) {
-                            const orbitText = sc.outputTranscription.text.trim();
-                            _lastOrbitText = orbitText;
-                            log.info(`[Orbit] ${orbitText}`);
-                            addMessage(SESSION_ID, "assistant", orbitText);
-                            broadcast({ type: "orbit_message", text: orbitText });
-                        }
-                        if (sc.turnComplete) {
-                            if (_lastOrbitText.trim()) {
-                                broadcast({ type: "orbit_message", text: _lastOrbitText.trim() });
-                                addMessage(SESSION_ID, "assistant", _lastOrbitText.trim());
-                                _lastOrbitText = "";
-                            }
-                            broadcast({ type: "turn_complete" });
-                            setTypingState("idle");
-                            if (_lastUserText) {
-                                maybeUpdateMemoryAsync(_lastUserText, _lastOrbitText).catch(() => {});
-                            }
-                        }
-                        // Capture token usage when Gemini reports it
-                        if (sc.usageMetadata) {
-                            const u = sc.usageMetadata;
-                            const inp = u.promptTokenCount       ?? u.inputTokenCount  ?? 0;
-                            const out = u.candidatesTokenCount   ?? u.outputTokenCount ?? 0;
-                            const ctx = u.totalTokenCount        ?? undefined;
-                            if (inp > 0 || out > 0) {
-                                updateTokenUsage(inp, out, ctx);
-                            }
-                        }
-                    }
-                    if (msg.toolCall?.functionCalls) {
-                        const responses: any[] = [];
-                        for (const call of msg.toolCall.functionCalls) {
-                            log.info(`[Tool] ${call.name}`, call.args);
-                            broadcast({ type: "tool_call", tool: call.name, args: call.args });
-                            setTypingState("executing", call.name);
-                            if (call.name === "agent_task") {
-                                const goal = call.args?.goal || "";
-                                const priority = call.args?.priority === "high"
-                                    ? TaskPriority.HIGH
-                                    : call.args?.priority === "low"
-                                        ? TaskPriority.LOW
-                                        : TaskPriority.NORMAL;
-                                const taskId = getQueue().submit(goal, priority, announce);
-                                responses.push({
-                                    id: call.id,
-                                    name: call.name,
-                                    response: { result: `Tarea encolada (ID: ${taskId}). Te avisare cuando termine.` }
-                                });
-                            } else {
-                                const result = await executeTool(call.name, call.args || {});
-                                broadcast({ type: "tool_result", tool: call.name, result: result.slice(0, 300) });
-                                responses.push({ id: call.id, name: call.name, response: { result } });
-                            }
-                        }
-                        setTypingState("idle");
-                        geminiSession.sendToolResponse({ functionResponses: responses });
-                    }
-                },
-                onerror: (e: any) => {
-                    log.error("Error sesion Gemini:", e?.message || e);
-                },
-                onclose: (e: any) => {
-                    isGeminiReady = false;
-                    geminiSession = null;
-                    const code = e?.code ?? "?";
-                    const reason = e?.reason ? ` - ${e.reason}` : "";
-                    log.info(`Gemini desconectado (${code}${reason}). Reconectando en ${_geminiReconnectDelay / 1000}s...`);
-                    broadcast({ type: "status", tasks: [] });
-                    setTypingState("idle");
-                    setTimeout(connectGemini, _geminiReconnectDelay);
-                    _geminiReconnectDelay = Math.min(_geminiReconnectDelay * 2, GEMINI_MAX_RECONNECT_DELAY);
+        if (!getConfig().providers.gemini.apiKey) {
+            send({ type: "error", message: "Configura GEMINI_API_KEY para usar el micrófono." });
+            return;
+        }
+        const deadline = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
+        const memory = formatMemoryForPrompt(await loadMemory());
+        const conversation = getHistory(sessionId, 10)
+            .map(message => message.role + ": " + message.content.slice(0, 1800)).join("\n");
+        const systemPrompt = getSystemPrompt(memory.slice(0, 8000), new Date().toLocaleString("es-MX"));
+        const result = await runVoiceTurn({
+            data,
+            systemPrompt: systemPrompt + "\n\nContexto previo de esta conversación\n" + conversation,
+            signal: deadline,
+            tools: toolRegistry.toGeminiDeclarations(getConfig().toolProfile),
+            onAudio: (pcm, sampleRate) => send({ type: "voice_audio", pcm, sampleRate }),
+            onUsage: updateTokenUsage,
+            execute: async (name, args) => {
+                send({ type: "tool_call", tool: name, args: {} });
+                send({ type: "typing", state: "executing", tool: name });
+                try {
+                    const output = await runInLane(sessionId, () => executeTool(name, args, deadline));
+                    send({ type: "tool_result", tool: name, result: output.slice(0, 1500) });
+                    return output;
+                } catch (error) {
+                    deadline.throwIfAborted();
+                    const output = error instanceof Error ? error.message : String(error);
+                    send({ type: "tool_result", tool: name, error: true, result: output.slice(0, 1500) });
+                    return "Error: " + output;
                 }
-            }
+            },
         });
-    } catch (e: any) {
-        log.error("Error al conectar con Gemini:", e.message);
-        setTimeout(connectGemini, _geminiReconnectDelay);
-        _geminiReconnectDelay = Math.min(_geminiReconnectDelay * 2, GEMINI_MAX_RECONNECT_DELAY);
+        if (result.user) {
+            addMessage(sessionId, "user", result.user);
+            send({ type: "user_message", text: result.user });
+            wakeWordMonitor.check(result.user);
+        }
+        if (result.assistant) {
+            addMessage(sessionId, "assistant", result.assistant);
+            send({ type: "orbit_message", text: result.assistant });
+            if (result.user) void maybeUpdateMemoryAsync(result.user, result.assistant).catch(() => {});
+        }
+    } catch {
+        send({
+            type: "error",
+            message: signal.aborted ? "Turno de voz cancelado." : "Gemini Live no pudo completar el turno de voz.",
+        });
+    } finally {
+        send({ type: "turn_complete" });
+        send({ type: "typing", state: "idle" });
     }
 }
 
@@ -350,13 +265,12 @@ async function main() {
     startMemoryAutoSave();
 
     // Start gateway FIRST so it's ready when web UI connects
-    await startGateway(announce, chat, config.server);
+    await startGateway(announce, chat, voice, config.server);
     await startWebServer(config.server.webPort, config.server.gatewayPort);
     process.send?.({ type: "orbit-ready", ...config.server });
     // Sprint 12: when Electron connects, enable native toasts
     onElectronConnected((connected) => setElectronConnected(connected));
     if (process.env.ORBIT_VISION_ENGINE === "1") startPythonEngine();
-    await connectGemini();
 
     const stop = () => {
         log.info("Cerrando Orbit...");

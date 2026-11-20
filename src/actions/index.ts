@@ -133,7 +133,7 @@ case "screen_find": result = await screenFind(args); break;
     case "drag": result = await drag(args); break;
     case "screen_context": result = await screenContext(args); break;
     //  ── Agent task (enqueued via task-queue in index.ts) ──────────
-case "agent_task": result = "Tarea encolada en el Task Queue. Te avisare cuando termine."; break;
+case "agent_task": result = await taskCreate({ description: args.goal, priority: args.priority }); break;
     //  ── Run Swarm (Sprint 5) ────────────────────────────────────
 case "run_swarm": {
         const tasks = args.tasks || [];

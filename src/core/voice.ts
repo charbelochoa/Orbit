@@ -1,152 +1,111 @@
-import WebSocket from "ws";
-import { getSystemPrompt } from "./prompt.js";
-import { TOOL_DECLARATIONS } from "./tool-registry.js";
-import { executeTool } from "../actions/index.js";
-import dotenv from "dotenv";
+import {
+    GoogleGenAI, Modality,
+    type FunctionDeclaration, type FunctionResponse, type LiveServerMessage, type Session,
+} from "@google/genai";
+import { getConfig } from "../config/config.js";
+import { IterationBudget } from "../agent/iteration-budget.js";
 
-dotenv.config();
+interface VoiceOptions {
+    data: string;
+    systemPrompt: string;
+    tools: FunctionDeclaration[];
+    signal: AbortSignal;
+    onAudio: (data: string, sampleRate: number) => void;
+    onUsage: (input: number, output: number) => void;
+    execute: (name: string, args: Record<string, unknown>) => Promise<string>;
+}
 
-const MODEL = "models/gemini-2.0-flash-exp";
-const HOST = "generativelanguage.googleapis.com";
+export async function runVoiceTurn(options: VoiceOptions): Promise<{ user: string; assistant: string }> {
+    const config = getConfig();
+    const { apiKey, baseUrl, models } = config.providers.gemini;
+    if (!apiKey) throw new Error("Añade GEMINI_API_KEY en la configuración para usar el micrófono.");
+    const signal = options.signal;
+    signal.throwIfAborted();
 
-export class GeminiLiveClient {
-    private ws: WebSocket | null = null;
-    private apiUrl: string;
+    const ai = new GoogleGenAI({ apiKey, httpOptions: baseUrl ? { baseUrl } : undefined });
+    const budget = new IterationBudget(config.agent.maxChatSteps);
+    const allowed = new Set(options.tools.map(tool => tool.name));
+    let session: Session | undefined;
+    let finished = false;
+    let user = "";
+    let assistant = "";
+    let resolveTurn: () => void;
+    let rejectTurn: (reason: unknown) => void;
+    const turn = new Promise<void>((resolve, reject) => { resolveTurn = resolve; rejectTurn = reject; });
+    const abort = () => rejectTurn(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
 
-    constructor() {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            throw new Error("GEMINI_API_KEY no esta configurada en .env");
-        }
-        this.apiUrl = `wss://${HOST}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
-    }
-
-    public async connect(): Promise<void> {
-        return new Promise((resolve, reject) => {
-            console.log("[Orbit Voice] Iniciando conexion con Gemini Live API...");
-            this.ws = new WebSocket(this.apiUrl);
-            this.ws.on("open", () => {
-                console.log("[Orbit Voice] Conectado.");
-                this.setupSession();
-                resolve();
-            });
-            this.ws.on("message", (data: WebSocket.RawData) => {
-                this.handleMessage(data);
-            });
-            this.ws.on("close", (code) => {
-                console.log(`[Orbit Voice] Desconectado (codigo ${code})`);
-            });
-            this.ws.on("error", (err) => {
-                console.error("[Orbit Voice] Error en WebSocket:", err);
-                reject(err);
-            });
-        });
-    }
-
-    private setupSession() {
-        const now = new Date().toLocaleString("es-MX");
-        const systemPrompt = getSystemPrompt("Sin datos guardados.", now);
-        const setupMessage = {
-            setup: {
-                model: MODEL,
-                generationConfig: {
-                    responseModalities: ["AUDIO"],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: { voiceName: "Aoede" }
-                        }
-                    }
-                },
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                tools: [{ functionDeclarations: TOOL_DECLARATIONS }]
-            }
-        };
-        this.send(setupMessage);
-        console.log("[Orbit Voice] Sesion configurada.");
-    }
-
-    private handleMessage(data: WebSocket.RawData) {
-        let msgStr = "";
-        if (Buffer.isBuffer(data)) {
-            msgStr = data.toString("utf-8");
-        } else {
-            msgStr = data.toString();
-        }
-        try {
-            const parsed = JSON.parse(msgStr);
-            if (parsed.serverContent) {
-                const sc = parsed.serverContent;
-                if (sc.modelTurn && sc.modelTurn.parts) {
-                    sc.modelTurn.parts.forEach((part: any) => {
-                        if (part.inlineData && part.inlineData.mimeType.startsWith("audio/")) {
-                            // audio data available: part.inlineData.data (base64)
-                        }
-                    });
-                }
-                if (sc.interrupted) {
-                    console.log("[Orbit Voice] Usuario interrumpio.");
+    const receive = async (message: LiveServerMessage) => {
+        if (signal.aborted) return;
+        const content = message.serverContent;
+        if (content) {
+            user += content.inputTranscription?.text || "";
+            assistant += content.outputTranscription?.text || "";
+            for (const part of content.modelTurn?.parts || []) {
+                const audio = part.inlineData;
+                if (audio?.data && audio.mimeType?.startsWith("audio/pcm")) {
+                    const rate = Number(audio.mimeType.match(/rate=(\d+)/)?.[1]) || 24000;
+                    options.onAudio(audio.data, rate);
                 }
             }
-            if (parsed.toolCall) {
-                this.handleToolCalls(parsed.toolCall);
-            }
-        } catch (e: any) {
-            console.error("[Orbit Voice] Error parseando mensaje del server:", e.message);
         }
-    }
-
-    private async handleToolCalls(toolCallPayload: any) {
-        if (toolCallPayload.functionCalls) {
-            const responses = [];
-            for (const call of toolCallPayload.functionCalls) {
-                console.log(`[Orbit Voice] TOOL CALL RECIBIDA: ${call.name}`);
-                const resultString = await executeTool(call.name, call.args);
-                responses.push({
-                    id: call.id,
-                    name: call.name,
-                    response: { result: resultString }
-                });
-            }
-            this.send({
-                toolResponse: { functionResponses: responses }
-            });
+        if (message.usageMetadata) {
+            const usage = message.usageMetadata;
+            options.onUsage(usage.promptTokenCount ?? 0, usage.candidatesTokenCount ?? 0);
         }
-    }
-
-    public sendAudio(pcm16Base64: string) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        const msg = {
-            realtimeInput: {
-                mediaChunks: [{
-                    mimeType: "audio/pcm;rate=16000",
-                    data: pcm16Base64
-                }]
+        const calls = message.toolCall?.functionCalls;
+        if (calls?.length) {
+            const responses: FunctionResponse[] = [];
+            for (const call of calls) {
+                signal.throwIfAborted();
+                if (!budget.consume()) throw new Error("Orbit alcanzó el límite de acciones de voz.");
+                const name = call.name ?? "";
+                const result = allowed.has(name)
+                    ? await options.execute(name, call.args ?? {})
+                    : "Herramienta no disponible.";
+                responses.push({ id: call.id, name, response: { result } });
             }
-        };
-        this.send(msg);
-    }
-
-    public sendText(text: string) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        const msg = {
-            clientContent: {
-                turns: [{ role: "user", parts: [{ text: text }] }],
-                turnComplete: true
-            }
-        };
-        this.send(msg);
-    }
-
-    private send(data: any) {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify(data));
+            signal.throwIfAborted();
+            session?.sendToolResponse({ functionResponses: responses });
         }
-    }
+        if (content?.turnComplete) resolveTurn();
+    };
 
-    public disconnect() {
-        if (this.ws) {
-            this.ws.close();
-            this.ws = null;
+    const connect = ai.live.connect({
+        model: models.live || "gemini-3.8-live",
+        config: {
+            abortSignal: signal,
+            responseModalities: [Modality.AUDIO],
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: config.voice.voiceName } } },
+            realtimeInputConfig: { automaticActivityDetection: { disabled: true } },
+            systemInstruction: options.systemPrompt,
+            tools: options.tools.length ? [{ functionDeclarations: options.tools }] : undefined,
+        },
+        callbacks: {
+            onmessage: message => { void receive(message).catch(rejectTurn); },
+            onerror: () => rejectTurn(new Error("Gemini Live no pudo continuar la sesión de voz.")),
+            onclose: () => rejectTurn(new Error("Gemini Live cerró la sesión de voz.")),
+        },
+    }).then(connection => {
+        if (finished || signal.aborted) {
+            connection.close();
+            throw signal.reason ?? new Error("La sesión de voz terminó.");
         }
+        session = connection;
+        session.sendRealtimeInput({ activityStart: {} });
+        session.sendRealtimeInput({ audio: { mimeType: "audio/pcm;rate=16000", data: options.data } });
+        session.sendRealtimeInput({ activityEnd: {} });
+        return turn;
+    });
+
+    try {
+        await Promise.race([connect, turn]);
+        return { user: user.trim(), assistant: assistant.trim() };
+    } finally {
+        finished = true;
+        signal.removeEventListener("abort", abort);
+        session?.close();
     }
 }

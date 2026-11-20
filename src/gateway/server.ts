@@ -34,7 +34,35 @@ export interface ChatTurn {
     send: (message: Record<string, unknown>) => void;
 }
 
+type TurnContext = Pick<ChatTurn, "sessionId" | "signal" | "send">;
+export type VoiceTurn = TurnContext & { data: string };
 type ChatHandler = (turn: ChatTurn) => Promise<void>;
+type VoiceHandler = (turn: VoiceTurn) => Promise<void>;
+
+async function runClientTurn(
+    client: Client,
+    conversationId: unknown,
+    handle: (context: TurnContext) => Promise<void>,
+) {
+    const send = (message: Record<string, unknown>) => {
+        if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(message));
+    };
+    if (client.turn) {
+        send({ type: "error", message: "Ya hay un turno en curso." });
+        return;
+    }
+    client.turn = new AbortController();
+    try {
+        await handle({ sessionId: sessionKey(client, conversationId), signal: client.turn.signal, send });
+    } finally {
+        client.turn = undefined;
+    }
+}
+
+function sessionKey(client: Client, id: unknown): string {
+    const conversation = typeof id === "string" && /^[\w-]{1,100}$/.test(id) ? id : client.id;
+    return `chat:${conversation}`;
+}
 
 const clients = new Map<string, Client>();
 
@@ -111,6 +139,7 @@ function isRateLimited(client: Client): boolean {
 export async function startGateway(
     speakFn: (text: string) => void,
     chat: ChatHandler,
+    voice: VoiceHandler,
     { gatewayPort, webPort }: { gatewayPort: number; webPort: number },
 ) {
     const allowedOrigins = new Set([undefined, `http://127.0.0.1:${webPort}`, `http://localhost:${webPort}`]);
@@ -173,7 +202,7 @@ export async function startGateway(
                     return;
                 }
 
-                await handleClientMessage(id, msg, speakFn, chat);
+                await handleClientMessage(id, msg, speakFn, chat, voice);
             } catch (e: any) {
                 ws.send(JSON.stringify({ type: "error", message: `JSON invalido: ${e.message}` }));
             }
@@ -197,7 +226,7 @@ export async function startGateway(
     return wss;
 }
 
-async function handleClientMessage(clientId: string, msg: any, speakFn: (text: string) => void, chat: ChatHandler) {
+async function handleClientMessage(clientId: string, msg: any, speakFn: (text: string) => void, chat: ChatHandler, voice: VoiceHandler) {
     const client = clients.get(clientId);
     if (!client) return;
     const { type, payload } = msg;
@@ -213,10 +242,6 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
             const send = (message: Record<string, unknown>) => {
                 if (client.ws.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify(message));
             };
-            const conversationId = typeof payload?.conversationId === "string" && /^[\w-]{1,100}$/.test(payload.conversationId)
-                ? payload.conversationId
-                : clientId;
-            const sessionId = `chat:${conversationId}`;
             if (text.toLowerCase() === "/stop") {
                 if (client.turn) client.turn.abort();
                 else send({ type: "turn_complete" });
@@ -228,21 +253,22 @@ async function handleClientMessage(clientId: string, msg: any, speakFn: (text: s
                 break;
             }
             if (isCommand(text)) {
-                if (text.toLowerCase() === "/clear") clearHistory(sessionId);
+                if (text.toLowerCase() === "/clear" && !client.turn) clearHistory(sessionKey(client, payload?.conversationId));
                 await dispatchCommand(text, clientId, client.ws, speakFn);
                 break;
             }
-            if (client.turn) {
-                send({ type: "error", message: "Ya hay un turno en curso." });
+            const provider = typeof payload?.provider === "string" ? payload.provider : undefined;
+            await runClientTurn(client, payload?.conversationId, context => chat({ ...context, text, provider }));
+            break;
+        }
+
+        case "audio": {
+            const data = payload?.pcm;
+            if (typeof data !== "string" || data.length > 1_280_000 || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+=*$/.test(data)) {
+                client.ws.send(JSON.stringify({ type: "error", message: "Orbit recibió audio inválido." }));
                 break;
             }
-            client.turn = new AbortController();
-            try {
-                const provider = typeof payload?.provider === "string" ? payload.provider : undefined;
-                await chat({ text, sessionId, signal: client.turn.signal, send, provider });
-            } finally {
-                client.turn = undefined;
-            }
+            await runClientTurn(client, payload?.conversationId, context => voice({ ...context, data }));
             break;
         }
 
