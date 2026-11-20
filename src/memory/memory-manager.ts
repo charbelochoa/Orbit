@@ -1,7 +1,7 @@
+import { APP_DATA } from "../config/paths.js";
 import fs from "fs/promises";
 import fsSync from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { createLogger } from "../infra/logger.js";
@@ -11,9 +11,8 @@ import { expandQuery } from "./query-expansion.js";
 dotenv.config();
 
 const log = createLogger("memory");
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MEMORY_PATH = path.join(__dirname, "../../data/memory/long_term.json");
-const MEMORY_MD_PATH = path.join(__dirname, "../../data/MEMORY.md");
+const MEMORY_PATH = path.join(APP_DATA, "memory", "long_term.json");
+const MEMORY_MD_PATH = path.join(APP_DATA, "MEMORY.md");
 
 // ── Vector store singleton ──────────────────────────────────────────────────
 let _vectorStore: VectorMemoryStore | null = null;

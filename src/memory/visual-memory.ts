@@ -18,21 +18,20 @@
  *   pruneOldEntries()           → delete entries past retentionDays
  */
 
+import { APP_DATA } from "../config/paths.js";
 import { DatabaseSync } from "node:sqlite";
 import screenshot                       from "screenshot-desktop";
 import os                               from "os";
 import fs                               from "fs/promises";
 import path                             from "path";
 import crypto                           from "crypto";
-import { fileURLToPath }                from "url";
 import { GoogleGenAI }                  from "@google/genai";
 import { createLogger }                 from "../infra/logger.js";
 import { getEmbeddingProvider }         from "./embedding-provider.js";
 import { getConfig }                    from "../config/config.js";
 
 const log = createLogger("visual-memory");
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, "../../data/memory.db");
+const DB_PATH = path.join(APP_DATA, "memory.db");
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

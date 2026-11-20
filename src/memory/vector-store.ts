@@ -12,10 +12,10 @@
  * FTS5 is the fallback when no embedding provider is available.
  */
 
+import { APP_DATA } from "../config/paths.js";
 import { DatabaseSync } from "node:sqlite";
 import { inTransaction } from "./sqlite.js";
 import path from "path";
-import { fileURLToPath } from "url";
 import fs from "fs";
 import crypto from "crypto";
 import { createLogger } from "../infra/logger.js";
@@ -24,8 +24,7 @@ import { getEmbeddingProvider, type EmbeddingProvider } from "./embedding-provid
 import { expandQuery } from "./query-expansion.js";
 
 const log = createLogger("memory");
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, "../../data/memory.db");
+const DB_PATH = path.join(APP_DATA, "memory.db");
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

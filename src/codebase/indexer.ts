@@ -14,17 +14,16 @@
  * la memoria personal (data/memory.db).
  */
 
+import { APP_DATA } from "../config/paths.js";
 import fs       from "fs";
 import path     from "path";
-import { fileURLToPath } from "url";
 import chokidar, { type FSWatcher } from "chokidar";
 import { createLogger }     from "../infra/logger.js";
 import { getConfig }        from "../config/config.js";
 import { VectorMemoryStore, type MemorySearchResult } from "../memory/vector-store.js";
 
 const log = createLogger("codebase");
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH   = path.join(__dirname, "../../data/codebase.db");
+const DB_PATH = path.join(APP_DATA, "codebase.db");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

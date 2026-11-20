@@ -11,15 +11,14 @@
  * Expone `getDominantApp(hour, dow)` para que MoodEngine y la tool lo consulten.
  */
 
+import { APP_DATA } from "../config/paths.js";
 import fs   from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import { createLogger } from "../infra/logger.js";
 import type { WindowSnapshot } from "./types.js";
 
 const log = createLogger("ambient");
-const __dirname    = path.dirname(fileURLToPath(import.meta.url));
-const PATTERNS_PATH = path.join(__dirname, "../../data/patterns.json");
+const PATTERNS_PATH = path.join(APP_DATA, "patterns.json");
 
 // patterns[dow 0-6][hour 0-23][app] = count
 type PatternMap = Record<number, Record<number, Record<string, number>>>;

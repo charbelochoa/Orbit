@@ -9,8 +9,9 @@ import dotenv from "dotenv";
 import { parse as parseYaml } from "yaml";
 import { orbitConfigSchema, type OrbitConfig } from "./schema.js";
 import { createLogger, setSubsystemLevels } from "../infra/logger.js";
+import { ORBIT_HOME, PROJECT_ROOT } from "./paths.js";
 
-dotenv.config();
+dotenv.config({ path: path.join(ORBIT_HOME, ".env") });
 
 const log = createLogger("config");
 let _config: OrbitConfig | null = null;
@@ -81,7 +82,9 @@ function mergeEnvVars(raw: any): void {
 export function loadConfig(configPath?: string): OrbitConfig {
     if (_config) return _config;
 
-    const filePath = configPath || path.join(process.cwd(), "config", "orbit.yaml");
+    const userConfig = path.join(ORBIT_HOME, "orbit.yaml");
+    const bundledConfig = path.join(PROJECT_ROOT, "config", "orbit.yaml");
+    const filePath = configPath || process.env.ORBIT_CONFIG || (fs.existsSync(userConfig) ? userConfig : bundledConfig);
     let raw: any = {};
 
     if (fs.existsSync(filePath)) {

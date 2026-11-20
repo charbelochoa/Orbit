@@ -1,10 +1,9 @@
+import { APP_DATA } from "../config/paths.js";
 import { DatabaseSync } from "node:sqlite";
 import path from "path";
-import { fileURLToPath } from "url";
 import fs from "fs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, "../../data/history.db");
+const DB_PATH = path.join(APP_DATA, "history.db");
 
 // Asegurar que el directorio existe
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });

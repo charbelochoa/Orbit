@@ -5,9 +5,9 @@
  * Now checks eligibility (requires: bins, env, platform).
  */
 
+import { SKILL_HOME, PROJECT_ROOT } from "../config/paths.js";
 import fs          from "fs/promises";
 import path        from "path";
-import { fileURLToPath } from "url";
 import yaml        from "yaml";
 import { skillRegistry } from "./registry.js";
 import { checkEligibility } from "./eligibility.js";
@@ -15,7 +15,6 @@ import type { Skill, SkillRequirements, SkillInstallGuide } from "./types.js";
 import { createLogger }  from "../infra/logger.js";
 
 const log = createLogger("skills");
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Frontmatter parser ────────────────────────────────────────────────────────
 
@@ -34,7 +33,16 @@ function parseFrontmatter(raw: string): { fm: Record<string, any>; body: string 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export async function loadAllSkills(skillsDir?: string): Promise<void> {
-    const dir = skillsDir ?? path.join(__dirname, "../../skills");
+    if (skillsDir) return loadSkillDirectory(skillsDir);
+    const bundled = path.join(PROJECT_ROOT, "skills");
+    await loadSkillDirectory(bundled);
+    if (bundled !== SKILL_HOME) {
+        await fs.mkdir(SKILL_HOME, { recursive: true });
+        await loadSkillDirectory(SKILL_HOME);
+    }
+}
+
+async function loadSkillDirectory(dir: string): Promise<void> {
     let loaded = 0;
     let skipped = 0;
     try {

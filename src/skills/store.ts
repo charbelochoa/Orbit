@@ -28,18 +28,17 @@
  *   default: https://raw.githubusercontent.com/orbit-ai/skills/main/catalog.json
  */
 
+import { APP_DATA, SKILL_HOME } from "../config/paths.js";
 import fs    from "fs/promises";
 import path  from "path";
 import https from "https";
 import http  from "http";
-import { fileURLToPath } from "url";
 import { createLogger }  from "../infra/logger.js";
 import { skillRegistry } from "./registry.js";
 
 const log = createLogger("skill-store");
-const __dirname     = path.dirname(fileURLToPath(import.meta.url));
-const CATALOG_PATH  = path.join(__dirname, "../../data/skill-store.json");
-const SKILLS_DIR    = path.join(__dirname, "../../skills");
+const CATALOG_PATH = path.join(APP_DATA, "skill-store.json");
+const SKILLS_DIR    = SKILL_HOME;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

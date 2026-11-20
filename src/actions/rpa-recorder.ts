@@ -23,15 +23,14 @@
  *   installAsSkill(id)    → write the SKILL.md into skills/<id>/SKILL.md
  */
 
+import { APP_DATA, SKILL_HOME } from "../config/paths.js";
 import fs            from "fs/promises";
 import path          from "path";
-import { fileURLToPath } from "url";
 import { createLogger }  from "../infra/logger.js";
 import { computerControl } from "./computer-control.js";
 
 const log       = createLogger("rpa-recorder");
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MACROS_DIR = path.join(__dirname, "../../data/rpa");
+const MACROS_DIR = path.join(APP_DATA, "rpa");
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -357,7 +356,7 @@ export async function installMacroAsSkill(id: string): Promise<string> {
     if (!rec) throw new Error(`Macro '${id}' no encontrada.`);
 
     const slug = rec.name.toLowerCase().replace(/[^a-z0-9-_]/g, "-").replace(/-+/g, "-");
-    const skillDir  = path.join(__dirname, "../../skills", slug);
+    const skillDir  = path.join(SKILL_HOME, slug);
     const skillPath = path.join(skillDir, "SKILL.md");
 
     await fs.mkdir(skillDir, { recursive: true });

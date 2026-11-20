@@ -1,6 +1,3 @@
-import dotenv from "dotenv";
-dotenv.config();
-
 import { GoogleGenAI, Modality } from "@google/genai";
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
