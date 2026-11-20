@@ -16,6 +16,7 @@ import path from "path";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "url";
 import { randomUUID } from "node:crypto";
+import { parseArgs } from "node:util";
 import { getConfig } from "./config/config.js";
 import { runHooks, initHooks } from "./hooks/runner.js";
 import { ORBIT_MASCOT } from "./core/mascot.js";
@@ -245,7 +246,8 @@ function getCompletions(partial: string): string[] {
 // ─── Main CLI class ─────────────────────────────────────────────────────────
 
 interface CLIOptions {
-  model?: string;
+  provider?: string;
+  modelName?: string;
   noLogo?: boolean;
   compact?: boolean;
   wsPort?: number;
@@ -258,7 +260,8 @@ class OrbitCLI {
   private spinner = new Spinner();
   private model: string;
   private readonly workspace: string;
-  private preferredProvider?: string;
+  private readonly preferredProvider?: string;
+  private readonly preferredModel?: string;
   private permissionRequests: Array<{ requestId: string; toolId: string; description?: string; args?: unknown }> = [];
   private conversationId = randomUUID();
   private taskSnapshot: Array<{ id: string; goal: string; status: string }> = [];
@@ -288,8 +291,9 @@ class OrbitCLI {
   private tabOriginal = "";
 
   constructor(opts: CLIOptions = {}) {
-    this.preferredProvider = opts.model;
-    this.model = opts.model || getConfig().defaultProvider;
+    this.preferredProvider = opts.provider;
+    this.preferredModel = opts.modelName;
+    this.model = opts.modelName || opts.provider || getConfig().defaultProvider;
     this.wsPort = opts.wsPort || getConfig().server.gatewayPort;
     this.compactMode = opts.compact || false;
     this.noLogo = opts.noLogo || false;
@@ -590,8 +594,7 @@ class OrbitCLI {
       case "status":
         this.taskSnapshot = Array.isArray(msg.tasks) ? msg.tasks : [];
         if (this.taskPanelVisible) this.renderTaskPanel();
-        if (msg.provider) this.model = msg.provider;
-        if (msg.providerId) this.model = msg.providerId;
+        if (!this.preferredProvider && msg.providerId) this.model = msg.model || msg.providerId;
         if (msg.contextWindow) this.contextMax = msg.contextWindow;
         if (msg.tokensUsed) this.tokensUsed = msg.tokensUsed;
         break;
@@ -605,8 +608,9 @@ class OrbitCLI {
         break;
 
       case "provider_changed": {
+        if (this.preferredProvider) break;
         const name = msg.name || msg.provider || msg.id || "AI";
-        this.model = name;
+        this.model = msg.model || name;
         process.stdout.write(`\n${C.accent}✦${RESET} ${C.text2}Proveedor cambiado a ${BOLD}${name}${RESET}\n`);
         this.showPrompt();
         break;
@@ -816,7 +820,7 @@ class OrbitCLI {
     runHooks("UserMessage", { event: "UserMessage", cwd: process.cwd(), user_message: text }).catch(() => {});
 
     // Send to gateway
-    this.sendWs({ type: "chat", payload: { text, conversationId: this.conversationId, provider: this.preferredProvider } });
+    this.sendWs({ type: "chat", payload: { text, conversationId: this.conversationId, provider: this.preferredProvider, model: this.preferredModel } });
     this.spinner.start("Pensando...");
   }
 
@@ -850,26 +854,30 @@ class OrbitCLI {
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 export async function runChat(args = process.argv.slice(2)) {
-  // Parse flags
-  const opts: CLIOptions = {};
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--model" && args[i + 1]) { opts.model = args[++i]; }
-    else if (arg === "--no-logo") { opts.noLogo = true; }
-    else if (arg === "--compact") { opts.compact = true; }
-    else if (arg === "--port" && args[i + 1]) { opts.wsPort = parseInt(args[++i], 10); }
-    else if (arg === "--workspace" && args[i + 1]) { opts.workspace = args[++i]; }
-    else if (arg === "chat") { /* subcommand, ignore */ }
-    else if (arg === "--help" || arg === "-h") {
-      console.log(`
+  const { values } = parseArgs({
+    args: args[0] === "chat" ? args.slice(1) : args,
+    options: {
+      provider: { type: "string" },
+      model: { type: "string" },
+      "model-name": { type: "string" },
+      "no-logo": { type: "boolean" },
+      compact: { type: "boolean" },
+      port: { type: "string" },
+      workspace: { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  if (values.help) {
+    console.log(`
 ${BOLD}Orbit AI${RESET} — Chat interactivo en terminal
 
 ${BOLD}Uso:${RESET}
   orbit chat [opciones]
 
 ${BOLD}Opciones:${RESET}
-  --model <nombre>   Proveedor de IA (gemini, openai, anthropic, ollama)
+  --provider <id>    Proveedor de la sesión (gemini, openai, anthropic, ollama)
+  --model <id>       Alias de --provider
+  --model-name <id>  Modelo de texto de ese proveedor
   --no-logo          No mostrar banner de inicio
   --compact          Mostrar logo condensado
   --port <numero>    Puerto del WebSocket gateway (default: 18789)
@@ -881,11 +889,19 @@ ${BOLD}Atajos:${RESET}
   /help              Ver comandos slash
   /exit              Salir
 `);
-      process.exit(0);
-    }
+    return;
   }
 
-  const cli = new OrbitCLI(opts);
+  const provider = values.provider ?? values.model;
+  if (values["model-name"] !== undefined && !provider) throw new Error("Usa --provider junto a --model-name.");
+  const port = values.port === undefined ? undefined : Number(values.port);
+  if (port !== undefined && (!Number.isInteger(port) || port < 1024 || port > 65535)) {
+    throw new Error("Puerto del gateway inválido.");
+  }
+  const cli = new OrbitCLI({
+    provider, modelName: values["model-name"], wsPort: port,
+    workspace: values.workspace, noLogo: values["no-logo"], compact: values.compact,
+  });
   initHooks();
   await cli.start();
 }

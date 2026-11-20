@@ -40,7 +40,8 @@ Orbit AI — CLI
   orbit help          Show this message
 
 Chat options:
-  --model <name>      AI provider (gemini, openai, anthropic, ollama)
+  --provider <id>    Proveedor (gemini, openai, anthropic, ollama)
+  --model-name <id>  Modelo de texto de ese proveedor
   --compact           Condensed logo
   --no-logo           Skip welcome banner
   --port <number>     Puerto del gateway

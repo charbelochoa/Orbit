@@ -11,6 +11,7 @@ export async function runAsk(args: string[]): Promise<void> {
         options: {
             workspace: { type: "string" },
             provider: { type: "string" },
+            "model-name": { type: "string" },
             port: { type: "string" },
             session: { type: "string" },
             json: { type: "boolean" },
@@ -18,9 +19,10 @@ export async function runAsk(args: string[]): Promise<void> {
         },
     });
     if (values.help) {
-        console.log("orbit ask [--workspace <ruta>] [--provider <id>] [--port <n>] [--session <nombre>] [--json] <mensaje>");
+        console.log("orbit ask [--workspace <ruta>] [--provider <id> [--model-name <modelo>]] [--port <n>] [--session <nombre>] [--json] <mensaje>");
         return;
     }
+    if (values["model-name"] !== undefined && !values.provider) throw new Error("Usa --provider junto a --model-name.");
     const text = (positionals.length ? positionals.join(" ") : await readPrompt()).trim();
     if (!text || text.length > 32_000 || text.startsWith("/")) {
         throw new Error("Indica una solicitud en lenguaje natural de hasta 32 000 caracteres.");
@@ -32,7 +34,7 @@ export async function runAsk(args: string[]): Promise<void> {
     const conversationId = values.session
         ? "cli_" + createHash("sha256").update(workspace).update("\0").update(values.session).digest("hex")
         : id;
-    const reply = await ask(port, id, { text, workspace, provider: values.provider, conversationId, requestId: id });
+    const reply = await ask(port, id, { text, workspace, provider: values.provider, model: values["model-name"], conversationId, requestId: id });
     console.log(values.json ? JSON.stringify({ text: reply, conversationId }) : reply);
 }
 
