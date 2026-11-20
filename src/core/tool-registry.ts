@@ -45,7 +45,7 @@ export const TOOL_DECLARATIONS = [
             properties: {
                 action:    { type: "STRING", description: "write | run | fix | explain" },
                 task:      { type: "STRING", description: "Descripción de lo que debe hacer el código (para write)" },
-                language:  { type: "STRING", description: "python | javascript | typescript | powershell | batch (default: python)" },
+                language:  { type: "STRING", description: "python | javascript | typescript | powershell | batch. Si se omite, se deduce de la extensión o se usa Python" },
                 file_path: { type: "STRING", description: "Ruta absoluta permitida o relativa al proyecto para guardar, ejecutar, corregir o explicar el archivo" },
                 auto_run:  { type: "BOOLEAN", description: "Si true (default), ejecuta tras generar (para write)" }
             },
