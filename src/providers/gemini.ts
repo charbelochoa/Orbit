@@ -50,7 +50,9 @@ export class GeminiProvider implements LLMProvider {
                 ? exchange.nativeAssistant as Content | undefined
                 : undefined;
             const calls = original?.parts?.flatMap(part => part.functionCall ? [part.functionCall] : []);
-            if (original && calls && calls.length === exchange.outcomes.length) {
+            if (original && calls && calls.length === exchange.outcomes.length &&
+                calls.every((call, index) => call.name === exchange.outcomes[index].call.name &&
+                    (!call.id || call.id === exchange.outcomes[index].call.id))) {
                 contents.push(original, {
                     role: "user",
                     parts: exchange.outcomes.map(({ output, failed }, index) => ({

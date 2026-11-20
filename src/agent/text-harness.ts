@@ -51,9 +51,10 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
         const allowCalls = turns.remaining > 0 && executions.remaining > 0 && tools.length > 0;
         const { messages, recent, omitted } = fitTurnContext(options.messages, exchanges);
         const finalInstruction = allowCalls ? "" : "\nRespond with the result of the work so far. The tool budget has ended. Do not call any tools.";
+        const traceNotice = omitted ? "\nSome earlier observations were omitted to fit the context." : "";
         const reminder: ChatMessage[] = correction ? [{ role: "user", content: correction }] : [];
         const legacy = () => options.generate({
-            systemPrompt: compatibilityPrompt + finalInstruction,
+            systemPrompt: compatibilityPrompt + finalInstruction + traceNotice,
             messages: [...messages, ...recent.flatMap(exchangeToJsonMessages), ...reminder],
             responseFormat: "json",
             maxTokens: 4096,
@@ -64,7 +65,7 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
         try {
             result = native
                 ? await options.generate({
-                    systemPrompt: guidance + finalInstruction + (correction ? "\n" + correction : ""),
+                    systemPrompt: guidance + finalInstruction + traceNotice + (correction ? "\n" + correction : ""),
                     messages,
                     maxTokens: 4096,
                     signal,
@@ -90,7 +91,12 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
             continue;
         }
 
-        correction = omitted ? "Some earlier trace was omitted to keep the recent actions in context." : "";
+        if (calls.length > maxIterations) {
+            correction = `Request at most ${maxIterations} tool calls per turn.`;
+            continue;
+        }
+        correction = "";
+        const resultBudget = Math.min(12_000, Math.floor(24_000 / calls.length));
         const outcomes: ToolOutcome[] = [];
         for (const call of normalizeToolCalls(calls, exchanges)) {
             signal.throwIfAborted();
@@ -105,7 +111,8 @@ export async function runHarnessTurn(options: TurnOptions): Promise<string> {
                 outcomes.push({ call, failed: true, output });
                 continue;
             }
-            outcomes.push({ call, ...await executeTool(options, call.name, args) });
+            const { output, failed } = await executeTool(options, call.name, args);
+            outcomes.push({ call, output: boundToolResult(output, resultBudget), failed });
         }
         exchanges.push({
             outcomes, provider: result.provider, model: result.model,
@@ -131,7 +138,7 @@ async function executeTool(options: TurnOptions, name: string, args: Record<stri
     }
     options.signal.throwIfAborted();
     options.onTool(name, output, failed);
-    return { output: boundToolResult(output), failed };
+    return { output, failed };
 }
 
 function fitTurnContext(history: ChatMessage[], exchanges: ToolExchange[]) {
